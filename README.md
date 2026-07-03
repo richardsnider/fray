@@ -23,6 +23,9 @@ Any static server works.
 - Uniform spatial-hash grid (`src/sim/spatialGrid.js`) for O(1)-ish neighbor
   queries.
 - Boids-style steering: seek objective + friend-only separation (`src/sim/world.js`).
+- Three unit types — heavy cavalry, longbow archers, pike/melee — with
+  data-driven stats, a rock-paper-scissors damage table, ranged bow fire, and
+  cavalry charges (`src/config.js`, `src/sim/world.js`).
 - Melee combat, morale, and routing with panic contagion (`src/sim/world.js`).
 - Camera over a fixed world larger than the screen (`src/render/camera.js`).
 - Terrain grid (elevation/water/brush) that feeds both the sim and the renderer
@@ -78,8 +81,8 @@ Checklist to measure the finished product against (✅ = met today, ⬜ = pendin
 - ✅ Setting is ~1450 Europe, pre-gunpowder (no firearms/artillery)
 
 **Combatants (pre-gunpowder arms)**
-- ⬜ Heavy armored cavalry · longbow archers · melee/pike infantry
-- ⬜ Rock-paper-scissors interplay (pike > cavalry > archers > pike, roughly)
+- ✅ Heavy armored cavalry · longbow archers · melee/pike infantry
+- ✅ Rock-paper-scissors interplay (pike > cavalry > archers > pike, roughly)
 
 **Systemic warfare**
 - ✅ Morale and routing
@@ -98,34 +101,10 @@ not production.
 ## Roadmap
 
 Done: **combat/morale** ✅ · **camera** ✅ · **terrain effects** ✅ ·
-**flow-field pathfinding** ✅. Remaining work, in dependency order:
+**flow-field pathfinding** ✅ · **unit types** ✅. Remaining work, in dependency
+order:
 
-### 1. Unit types — heavy cavalry · longbow · pike/melee
-
-*Why first: the director's objectives and the strategic layer are only
-interesting once units have distinct roles.*
-
-- **Data-driven stats.** The `type` field already exists in the SoA store
-  (currently all 0). Add a `UnitType` enum and a per-type stat table in
-  `config.js` (hp, speed, melee dps, range, armor, charge) — balancing becomes
-  one table edit. Hot-loop reads stay cheap: small const arrays indexed by type.
-- **Rock-paper-scissors** via a 2-D `damageMultiplier[attacker][target]` table
-  (e.g. pike bonus vs cavalry, cavalry bonus vs archers/routers, archers feeble
-  in melee).
-- **Longbows = ranged.** *Assumption:* hitscan first, not projectile physics —
-  each archer on a cooldown picks the nearest enemy in range and applies damage,
-  reduced by the target's **brush cover** (this is where the deferred
-  cover-vs-archers mechanic lands). Projectile entities are a later visual
-  upgrade only if needed.
-- **Cavalry charge** as a transient bonus: high impact + morale shock when a
-  fast-moving horse unit contacts an enemy head-on after a straight run, then
-  decays to normal melee.
-- **Rendering:** distinguish types by dot tint/size within the pixel aesthetic
-  (e.g. cavalry a touch larger).
-- *Assumptions:* fixed 3-type roster to start; formations stay **emergent**
-  (separation), not rigid ranks.
-
-### 2. AI director — the "plays itself" brain
+### 1. AI director — the "plays itself" brain
 
 *Depends on unit types (objectives reference roles).*
 
@@ -143,7 +122,7 @@ interesting once units have distinct roles.*
   not choreography; ~4–12 groups per side to keep planning + flow-fields cheap;
   planner runs on a fixed cadence with seeded RNG so the sim stays deterministic.
 
-### 3. Strategic layer — supply · razing · raiding · sieges
+### 2. Strategic layer — supply · razing · raiding · sieges
 
 *Depends on the director (these are objectives it pursues).*
 

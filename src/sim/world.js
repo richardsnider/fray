@@ -6,19 +6,24 @@ import * as T from './terrain.js';
 import { SpatialGrid } from './spatialGrid.js';
 import { FlowField } from './flowField.js';
 import {
-  MAX_UNITS, WORLD_W, WORLD_H, ARMY_SIZE, MAX_SPEED, SEEK_ACCEL, SEP_RADIUS, SEP_ACCEL, DAMPING,
-  ATTACK_RANGE, ATTACK_DPS, FLEE_SPEED_MULT,
+  MAX_UNITS, WORLD_W, WORLD_H, ARMY_SIZE, SEEK_ACCEL, SEP_RADIUS, SEP_ACCEL, DAMPING,
+  ATTACK_RANGE, FLEE_SPEED_MULT,
   MORALE_MAX, ROUT_THRESHOLD, RALLY_THRESHOLD, MORALE_REGEN,
   FEAR_OUTNUMBERED, FEAR_PANIC, HIT_FEAR,
   SLOPE_SPEED, COVER_SLOW, HEIGHT_DMG, WATER_LOOK, WATER_AVOID,
   FLOW_CELL, FLOW_UPDATE_TICKS,
+  UnitType, ARMY_MIX, TYPE_SPEED, TYPE_MELEE_DPS, TYPE_ARMOR, DMG_MULT,
+  ARCHER_RANGE, ARCHER_RELOAD, ARCHER_SHOT_DMG, ARROW_COVER,
+  CHARGE_MIN_SPEED, CHARGE_DMG, CHARGE_MORALE, CHARGE_COOLDOWN,
 } from '../config.js';
 
 const { ACTIVE, ROUTING, DEAD } = U.STATE;
+const { KNIGHT, ARCHER, PIKE } = UnitType;
 
 const W = WORLD_W;
 const H = WORLD_H;
-let grid = null;
+let grid = null;        // fine grid (SEP_RADIUS) for separation + melee
+let rangedGrid = null;  // coarse grid (ARCHER_RANGE) for bow targeting
 
 // One flow field per team, routing around water toward that team's objective.
 const flows = [null, null];
@@ -40,6 +45,9 @@ const stats = { team0: 0, team1: 0 };
 export function init() {
   T.generate();
   grid = new SpatialGrid(W, H, SEP_RADIUS);
+  // Bow range dwarfs the melee cell, so archers target off a coarser grid whose
+  // cell == range: a 3x3 walk then guarantees every enemy in range is visited.
+  rangedGrid = new SpatialGrid(W, H, ARCHER_RANGE);
   const blocked = (wx, wy) => T.isWaterAt(wx, wy);
   for (let t = 0; t < flows.length; t++) {
     flows[t] = new FlowField(W, H, FLOW_CELL);
@@ -71,8 +79,19 @@ function spawnArmy(x0, x1, team) {
       x = rand(x0, x1);
       y = rand(H * 0.2, H * 0.8);
     } while (T.isWaterAt(x, y) && ++tries < 20);
-    U.spawn(x, y, team);
+    U.spawn(x, y, team, pickType());
   }
+}
+
+// Draw a unit type from the army composition weights.
+function pickType() {
+  const r = Math.random();
+  let acc = 0;
+  for (let t = 0; t < ARMY_MIX.length; t++) {
+    acc += ARMY_MIX[t];
+    if (r < acc) return t;
+  }
+  return ARMY_MIX.length - 1;
 }
 
 function rand(a, b) {
@@ -118,6 +137,7 @@ export function step(dt) {
   flowTick++;
 
   grid.build(count, U.x, U.y);
+  rangedGrid.build(count, U.x, U.y);
 
   const { cell, cols, rows, heads, next } = grid;
   const scanR2 = SEP_RADIUS * SEP_RADIUS;   // separation / awareness radius
@@ -128,6 +148,8 @@ export function step(dt) {
     const yi = U.y[i];
     const teami = U.team[i];
     const statei = U.state[i];
+    const typei = U.type[i];
+    if (U.cooldown[i] > 0) U.cooldown[i] -= dt; // archer reload / charge recovery
 
     // --- neighbor scan: separation (friends), plus enemy/friend awareness -----
     let sx = 0, sy = 0;
@@ -173,11 +195,23 @@ export function step(dt) {
     // --- combat: active units strike the nearest enemy in reach ---------------
     let engaged = false;
     if (statei === ACTIVE && ceIdx !== -1 && ceD2 <= attackR2) {
+      const tt = U.type[ceIdx];
       // Attacking downhill (higher ground than the target) hits harder.
       const dh = T.elevation[T.cellOf(xi, yi)] - T.elevation[T.cellOf(U.x[ceIdx], U.y[ceIdx])];
       let bonus = 1 + dh * HEIGHT_DMG;
       if (bonus < 0.5) bonus = 0.5; else if (bonus > 1.6) bonus = 1.6;
-      dmg[ceIdx] += ATTACK_DPS * dt * bonus;
+      // Per-type dps, the rock-paper-scissors matchup, and the target's armor.
+      let hit = TYPE_MELEE_DPS[typei] * dt * bonus * DMG_MULT[typei][tt] * (1 - TYPE_ARMOR[tt]);
+      // Cavalry charge: a ready knight moving fast into contact delivers a burst
+      // plus morale shock — unless the target is a braced pike, which negates it
+      // (this is what makes pike beat cavalry). Then it goes on cooldown.
+      if (typei === KNIGHT && tt !== PIKE && U.cooldown[i] <= 0 &&
+          Math.hypot(U.vx[i], U.vy[i]) >= CHARGE_MIN_SPEED) {
+        hit *= CHARGE_DMG;
+        U.morale[ceIdx] -= CHARGE_MORALE; // clamped in the apply pass
+        U.cooldown[i] = CHARGE_COOLDOWN;
+      }
+      dmg[ceIdx] += hit;
       engaged = true;
     }
 
@@ -245,7 +279,8 @@ export function step(dt) {
 
     let nvx = (U.vx[i] + ax * dt) * DAMPING;
     let nvy = (U.vy[i] + ay * dt) * DAMPING;
-    const maxSp = statei === ROUTING ? MAX_SPEED * FLEE_SPEED_MULT : MAX_SPEED;
+    const baseSp = TYPE_SPEED[typei];
+    const maxSp = statei === ROUTING ? baseSp * FLEE_SPEED_MULT : baseSp;
     let sp = Math.hypot(nvx, nvy);
     if (sp > maxSp) {
       const k = maxSp / sp;
@@ -281,6 +316,52 @@ export function step(dt) {
     if (ny < 0) ny = 0; else if (ny > H - 1) ny = H - 1;
     U.x[i] = nx;
     U.y[i] = ny;
+  }
+
+  // --- ranged: each ready archer looses one arrow at its nearest enemy --------
+  // Reload cadence rate-limits this scan, so only a fraction of archers search
+  // per tick. Damage is cut by the target's armor, the RPS matchup, and — the
+  // deferred cover mechanic — how much brush the target is standing in.
+  {
+    const rcell = rangedGrid.cell;
+    const rcols = rangedGrid.cols;
+    const rrows = rangedGrid.rows;
+    const rheads = rangedGrid.heads;
+    const rnext = rangedGrid.next;
+    const rangeR2 = ARCHER_RANGE * ARCHER_RANGE;
+    for (let i = 0; i < count; i++) {
+      if (U.type[i] !== ARCHER || U.state[i] !== ACTIVE || U.cooldown[i] > 0) continue;
+      const xi = U.x[i];
+      const yi = U.y[i];
+      const teami = U.team[i];
+      let best = -1, bestD2 = rangeR2;
+      const cx = clampCell((xi / rcell) | 0, rcols);
+      const cy = clampCell((yi / rcell) | 0, rrows);
+      for (let oy = -1; oy <= 1; oy++) {
+        const gy = cy + oy;
+        if (gy < 0 || gy >= rrows) continue;
+        for (let ox = -1; ox <= 1; ox++) {
+          const gx = cx + ox;
+          if (gx < 0 || gx >= rcols) continue;
+          let j = rheads[gy * rcols + gx];
+          while (j !== -1) {
+            if (U.team[j] !== teami && U.state[j] !== DEAD) {
+              const dx = xi - U.x[j];
+              const dy = yi - U.y[j];
+              const dd = dx * dx + dy * dy;
+              if (dd < bestD2) { bestD2 = dd; best = j; }
+            }
+            j = rnext[j];
+          }
+        }
+      }
+      if (best !== -1) {
+        const tt = U.type[best];
+        const cover = T.cover[T.cellOf(U.x[best], U.y[best])];
+        dmg[best] += ARCHER_SHOT_DMG * DMG_MULT[ARCHER][tt] * (1 - TYPE_ARMOR[tt]) * (1 - cover * ARROW_COVER);
+        U.cooldown[i] = ARCHER_RELOAD;
+      }
+    }
   }
 
   // --- apply damage, resolve morale-driven state transitions ------------------

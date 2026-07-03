@@ -16,7 +16,7 @@ export const MAX_ZOOM = 5;              // min zoom is derived so the view can't
 export const ARMY_SIZE = 2500;
 
 // Steering / movement (world units per second).
-export const MAX_SPEED = 42;
+export const MAX_SPEED = 42;           // legacy/fallback march speed; per-type below
 export const SEEK_ACCEL = 90;
 export const SEP_RADIUS = 6;            // also the spatial-grid cell size
 export const SEP_ACCEL = 220;
@@ -39,8 +39,49 @@ export const FLOW_UPDATE_TICKS = 8;     // recompute cadence (~4x/sec at 33Hz)
 
 // Combat.
 export const ATTACK_RANGE = 5;          // melee reach (world units)
-export const ATTACK_DPS = 16;           // hp/sec dealt to the engaged target
+export const ATTACK_DPS = 16;           // legacy base melee dps (per-type below)
 export const FLEE_SPEED_MULT = 1.6;     // routing units run faster than they march
+
+// --- Unit types -------------------------------------------------------------
+// Three pre-gunpowder roles. Stats are small const arrays indexed by UnitType so
+// the hot loop reads stay cheap and balancing is a one-table edit.
+export const UnitType = { KNIGHT: 0, ARCHER: 1, PIKE: 2 };
+export const UNIT_TYPE_COUNT = 3;
+
+//                          KNIGHT ARCHER  PIKE
+export const TYPE_HP        = [150,   65,   100];  // starting hit points
+export const TYPE_SPEED     = [ 72,   40,    40];  // max march speed (world u/s)
+export const TYPE_MELEE_DPS = [ 18,    4,    14];  // hp/sec in melee reach
+export const TYPE_ARMOR     = [0.45, 0.10,  0.30]; // fractional incoming-dmg reduction
+
+// Rock-paper-scissors: multiplier applied to damage from attacker → target
+// (melee and ranged). Roughly pike > cavalry > archers > pike.
+//                              target: KNIGHT ARCHER  PIKE
+export const DMG_MULT = [
+  /* KNIGHT attacks */         [   1.0,   1.6,  0.55 ],
+  /* ARCHER attacks */         [   0.6,   1.0,  1.35 ],
+  /* PIKE   attacks */         [   1.7,  0.85,  1.0  ],
+];
+
+// Longbows: hitscan. A ready archer picks the nearest enemy in range each reload
+// and applies one arrow's damage, reduced by the target's armor, RPS multiplier,
+// and brush cover (the cover-vs-archers mechanic).
+export const ARCHER_RANGE = 110;        // bow reach (world units)
+export const ARCHER_RELOAD = 1.4;       // seconds between shots
+export const ARCHER_SHOT_DMG = 30;      // base damage per arrow
+export const ARROW_COVER = 0.7;         // max fractional arrow reduction in dense brush
+
+// Cavalry charge: a transient impact bonus when a fast-moving horse contacts an
+// enemy head-on after a straight run, then a recovery cooldown. Braced pikes
+// (target === PIKE) negate the charge — that is what makes pike > cavalry.
+export const CHARGE_MIN_SPEED = 50;     // must be moving this fast to charge
+export const CHARGE_DMG = 4.5;          // melee-damage multiplier on the impact tick
+export const CHARGE_MORALE = 24;        // morale shock dealt to the struck enemy
+export const CHARGE_COOLDOWN = 3.0;     // seconds before a horse can charge again
+
+// Army composition — fraction of each spawned army by type (must sum to ~1).
+//                          KNIGHT ARCHER PIKE
+export const ARMY_MIX = [0.20, 0.30, 0.50];
 
 // Morale / routing. Morale is 0..MORALE_MAX; below ROUT it breaks, and a broken
 // unit must recover past RALLY to re-form.
