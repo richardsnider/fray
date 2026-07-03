@@ -2,39 +2,31 @@
 // Rebuilt every tick — cheap — and turns "who is near me?" from O(n^2) into an
 // O(1)-ish 3x3 cell walk. Uniform grid beats a quadtree here: units are roughly
 // evenly distributed and this is far simpler with no allocation per frame.
+//
+// A grid is plain data: { cell, cols, rows, heads, next }. build() mutates it.
 
 import { MAX_UNITS } from '../config.js';
 
-export class SpatialGrid {
-  constructor(width, height, cell) {
-    this.cell = cell;
-    this.cols = Math.max(1, Math.ceil(width / cell));
-    this.rows = Math.max(1, Math.ceil(height / cell));
-    this.heads = new Int32Array(this.cols * this.rows);
-    this.next = new Int32Array(MAX_UNITS);
-  }
+const clampCell = (c, max) => (c < 0 ? 0 : c >= max ? max - 1 : c);
 
-  resize(width, height) {
-    this.cols = Math.max(1, Math.ceil(width / this.cell));
-    this.rows = Math.max(1, Math.ceil(height / this.cell));
-    this.heads = new Int32Array(this.cols * this.rows);
-  }
+export const create = (width, height, cell) => {
+  const cols = Math.max(1, Math.ceil(width / cell));
+  const rows = Math.max(1, Math.ceil(height / cell));
+  return {
+    cell, cols, rows,
+    heads: new Int32Array(cols * rows),
+    next: new Int32Array(MAX_UNITS),
+  };
+};
 
-  cellCoord(v, max) {
-    let c = v | 0;
-    if (c < 0) c = 0; else if (c >= max) c = max - 1;
-    return c;
+export const build = (g, count, xs, ys) => {
+  const { cell, cols, rows, heads, next } = g;
+  heads.fill(-1);
+  for (let i = 0; i < count; i++) {
+    const cx = clampCell((xs[i] / cell) | 0, cols);
+    const cy = clampCell((ys[i] / cell) | 0, rows);
+    const c = cy * cols + cx;
+    next[i] = heads[c];
+    heads[c] = i;
   }
-
-  build(count, xs, ys) {
-    this.heads.fill(-1);
-    const { cell, cols, rows, heads, next } = this;
-    for (let i = 0; i < count; i++) {
-      const cx = this.cellCoord((xs[i] / cell) | 0, cols);
-      const cy = this.cellCoord((ys[i] / cell) | 0, rows);
-      const c = cy * cols + cx;
-      next[i] = heads[c];
-      heads[c] = i;
-    }
-  }
-}
+};

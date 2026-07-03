@@ -23,7 +23,7 @@ export const STATE = { ACTIVE: 0, ROUTING: 1, DEAD: 2 };
 // `count` is exported live: importers see it grow via the module binding.
 export let count = 0;
 
-export function spawn(sx, sy, t, ut) {
+export const spawn = (sx, sy, t, ut) => {
   const i = count++;
   px[i] = x[i] = sx;
   py[i] = y[i] = sy;
@@ -35,16 +35,14 @@ export function spawn(sx, sy, t, ut) {
   state[i] = STATE.ACTIVE;
   cooldown[i] = 0;
   return i;
-}
+};
 
-export function reset() {
-  count = 0;
-}
+export const reset = () => { count = 0; };
 
 // Remove units flagged DEAD by swapping the last live unit into their slot.
 // O(count), allocation-free. The grid is rebuilt every tick so shifted indices
 // are harmless, and prev-position is refreshed at the top of the next step.
-export function compactDead() {
+export const compactDead = () => {
   let i = 0;
   while (i < count) {
     if (state[i] === STATE.DEAD) {
@@ -62,4 +60,4 @@ export function compactDead() {
       i++;
     }
   }
-}
+};

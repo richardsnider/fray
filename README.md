@@ -56,6 +56,7 @@ src/
     spatialGrid.js   linked-list uniform grid
     terrain.js       elevation/water/brush grids + sampling
     flowField.js     BFS flow-field pathfinding (one field per army)
+    rng.js           seeded PRNG (mulberry32) so a seed reproduces a battle
     world.js         steering, combat, morale, terrain integration
   render/
     camera.js        viewport: world<->screen transform, pan/zoom, clamping
@@ -63,6 +64,18 @@ src/
   input/
     input.js         player command layer
 ```
+
+**Code style — data-oriented & functional.** There are no classes. Each module
+owns plain data (typed arrays or a small state record) and exposes standalone
+functions that take that state as their first argument — e.g. a spatial grid is
+`Grid.create(w, h, cell)` → `{ cell, cols, rows, heads, next }`, mutated by
+`Grid.build(grid, …)`; a camera is a plain `{ x, y, zoom, … }` acted on by
+`Camera.panByScreen(cam, …)`. Modules are imported as namespaces (`import * as Grid`) 
+so call sites read `Grid.build(grid, …)`. Functions are arrow bindings
+(`export const f = (a, b) => …`), expression-bodied wherever a block-and-`return`
+isn't genuinely needed. This keeps state transparent (trivial to snapshot for
+determinism) and the sim easy to test as pure-ish functions. The performance
+story is unchanged — it's the SoA typed arrays, not the object model.
 
 ## Vision & success criteria
 

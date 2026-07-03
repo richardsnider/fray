@@ -3,8 +3,8 @@
 
 import * as U from './units.js';
 import * as T from './terrain.js';
-import { SpatialGrid } from './spatialGrid.js';
-import { FlowField } from './flowField.js';
+import * as Grid from './spatialGrid.js';
+import * as Flow from './flowField.js';
 import { mulberry32 } from './rng.js';
 import {
   MAX_UNITS, WORLD_W, WORLD_H, ARMY_SIZE, SEEK_ACCEL, SEP_RADIUS, SEP_ACCEL, DAMPING,
@@ -37,7 +37,7 @@ const dmg = new Float32Array(MAX_UNITS);
 
 // Per-team objective point. In the slice each team seeks the enemy's center of
 // mass, so the armies clash on their own. A player click overrides team 0's.
-const targets = [ { x: 0, y: 0 }, { x: 0, y: 0 } ];
+const targets = [{ x: 0, y: 0 }, { x: 0, y: 0 }];
 let manualTarget0 = null;
 
 // Live counts for the HUD, refreshed each tick.
@@ -47,38 +47,34 @@ const stats = { team0: 0, team1: 0 };
 // reproduces the whole battle. Decorrelated from the terrain seed via XOR.
 let rng = Math.random;
 
-export function init(seed = 0) {
+export const init = (seed = 0) => {
   rng = mulberry32((seed ^ 0x9e3779b9) >>> 0);
   T.generate(seed);
-  grid = new SpatialGrid(W, H, SEP_RADIUS);
+  grid = Grid.create(W, H, SEP_RADIUS);
   // Bow range dwarfs the melee cell, so archers target off a coarser grid whose
   // cell == range: a 3x3 walk then guarantees every enemy in range is visited.
-  rangedGrid = new SpatialGrid(W, H, ARCHER_RANGE);
+  rangedGrid = Grid.create(W, H, ARCHER_RANGE);
   const blocked = (wx, wy) => T.isWaterAt(wx, wy);
   for (let t = 0; t < flows.length; t++) {
-    flows[t] = new FlowField(W, H, FLOW_CELL);
-    flows[t].setBlocked(blocked);
+    flows[t] = Flow.create(W, H, FLOW_CELL);
+    Flow.setBlocked(flows[t], blocked);
   }
   flowTick = 0;
   manualTarget0 = null;
   U.reset();
   spawnArmies();
-}
+};
 
-export function setManualTarget(x, y) {
-  manualTarget0 = { x, y };
-}
+export const setManualTarget = (x, y) => { manualTarget0 = { x, y }; };
 
-export function getStats() {
-  return stats;
-}
+export const getStats = () => stats;
 
-function spawnArmies() {
+const spawnArmies = () => {
   spawnArmy(W * 0.06, W * 0.24, 0);
   spawnArmy(W * 0.76, W * 0.94, 1);
-}
+};
 
-function spawnArmy(x0, x1, team) {
+const spawnArmy = (x0, x1, team) => {
   for (let i = 0; i < ARMY_SIZE; i++) {
     let x, y, tries = 0;
     // Reject spots that landed in water so nobody spawns stranded.
@@ -88,10 +84,10 @@ function spawnArmy(x0, x1, team) {
     } while (T.isWaterAt(x, y) && ++tries < 20);
     U.spawn(x, y, team, pickType());
   }
-}
+};
 
 // Draw a unit type from the army composition weights.
-function pickType() {
+const pickType = () => {
   const r = rng();
   let acc = 0;
   for (let t = 0; t < ARMY_MIX.length; t++) {
@@ -99,13 +95,11 @@ function pickType() {
     if (r < acc) return t;
   }
   return ARMY_MIX.length - 1;
-}
+};
 
-function rand(a, b) {
-  return a + rng() * (b - a);
-}
+const rand = (a, b) => a + rng() * (b - a);
 
-function updateTargets() {
+const updateTargets = () => {
   // Centroid per team → default objective is "advance on the enemy mass".
   // Routing units are excluded so a formation doesn't chase its own fleers.
   let x0 = 0, y0 = 0, n0 = 0;
@@ -125,9 +119,9 @@ function updateTargets() {
   if (manualTarget0) { targets[0].x = manualTarget0.x; targets[0].y = manualTarget0.y; }
   stats.team0 = a0;
   stats.team1 = a1;
-}
+};
 
-export function step(dt) {
+export const step = (dt) => {
   const count = U.count;
 
   // Snapshot current positions as "previous" for render interpolation.
@@ -138,13 +132,13 @@ export function step(dt) {
 
   // Rebuild each team's flow field toward its objective, a few times a second.
   if (flowTick % FLOW_UPDATE_TICKS === 0) {
-    flows[0].compute(targets[0].x, targets[0].y);
-    flows[1].compute(targets[1].x, targets[1].y);
+    Flow.compute(flows[0], targets[0].x, targets[0].y);
+    Flow.compute(flows[1], targets[1].x, targets[1].y);
   }
   flowTick++;
 
-  grid.build(count, U.x, U.y);
-  rangedGrid.build(count, U.x, U.y);
+  Grid.build(grid, count, U.x, U.y);
+  Grid.build(rangedGrid, count, U.x, U.y);
 
   const { cell, cols, rows, heads, next } = grid;
   const scanR2 = SEP_RADIUS * SEP_RADIUS;   // separation / awareness radius
@@ -257,7 +251,7 @@ export function step(dt) {
       // March toward the objective, following the team flow field so the path
       // routes around water. Near the goal (or unreachable cells) the field
       // reads zero, so fall back to steering straight at the objective point.
-      flows[teami].sampleDir(xi, yi, flowDir);
+      Flow.sampleDir(flows[teami], xi, yi, flowDir);
       if (flowDir.x !== 0 || flowDir.y !== 0) {
         ax = flowDir.x * SEEK_ACCEL;
         ay = flowDir.y * SEEK_ACCEL;
@@ -393,22 +387,8 @@ export function step(dt) {
   }
 
   U.compactDead();
-}
+};
 
-function clampCell(c, max) {
-  if (c < 0) return 0;
-  if (c >= max) return max - 1;
-  return c;
-}
-
-function tClampX(cx) {
-  if (cx < 0) return 0;
-  if (cx >= T.cols) return T.cols - 1;
-  return cx;
-}
-
-function tClampY(cy) {
-  if (cy < 0) return 0;
-  if (cy >= T.rows) return T.rows - 1;
-  return cy;
-}
+const clampCell = (c, max) => (c < 0 ? 0 : c >= max ? max - 1 : c);
+const tClampX = (cx) => (cx < 0 ? 0 : cx >= T.cols ? T.cols - 1 : cx);
+const tClampY = (cy) => (cy < 0 ? 0 : cy >= T.rows ? T.rows - 1 : cy);

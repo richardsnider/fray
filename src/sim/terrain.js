@@ -18,7 +18,7 @@ export let cover = new Float32Array(0);      // 0..1 brush density
 // Folded into the value-noise hash so each seed yields a distinct battlefield.
 let seed = 0;
 
-export function generate(s = 0) {
+export const generate = (s = 0) => {
   seed = s >>> 0;
   cols = Math.ceil(WORLD_W / CELL) + 1;
   rows = Math.ceil(WORLD_H / CELL) + 1;
@@ -44,30 +44,22 @@ export function generate(s = 0) {
       cover[i] = water[i] ? 0 : smoothstep(0.5, 0.72, c);
     }
   }
-}
+};
 
 // --- sampling --------------------------------------------------------------
-export function cellOf(wx, wy) {
+export const cellOf = (wx, wy) => {
   let cx = (wx / CELL) | 0;
   let cy = (wy / CELL) | 0;
   if (cx < 0) cx = 0; else if (cx >= cols) cx = cols - 1;
   if (cy < 0) cy = 0; else if (cy >= rows) cy = rows - 1;
   return cy * cols + cx;
-}
+};
 
-export function isWaterAt(wx, wy) {
-  return water[cellOf(wx, wy)] === 1;
-}
+export const isWaterAt = (wx, wy) => water[cellOf(wx, wy)] === 1;
+export const elevBilinear = (wx, wy) => bilinear(elevation, wx, wy);
+export const coverBilinear = (wx, wy) => bilinear(cover, wx, wy);
 
-export function elevBilinear(wx, wy) {
-  return bilinear(elevation, wx, wy);
-}
-
-export function coverBilinear(wx, wy) {
-  return bilinear(cover, wx, wy);
-}
-
-function bilinear(grid, wx, wy) {
+const bilinear = (grid, wx, wy) => {
   const fx = wx / CELL;
   const fy = wy / CELL;
   let x0 = Math.floor(fx);
@@ -83,27 +75,27 @@ function bilinear(grid, wx, wy) {
   const c = grid[y1 * cols + x0];
   const d = grid[y1 * cols + x1];
   return lerp(lerp(a, b, tx), lerp(c, d, tx), ty);
-}
+};
 
 // --- helpers ---------------------------------------------------------------
-function clamp01(v) { return v < 0 ? 0 : v > 1 ? 1 : v; }
-function lerp(a, b, t) { return a + (b - a) * t; }
+const clamp01 = (v) => (v < 0 ? 0 : v > 1 ? 1 : v);
+const lerp = (a, b, t) => a + (b - a) * t;
 
-function smoothstep(e0, e1, x) {
+const smoothstep = (e0, e1, x) => {
   let t = (x - e0) / (e1 - e0);
   if (t < 0) t = 0; else if (t > 1) t = 1;
   return t * t * (3 - 2 * t);
-}
+};
 
 // --- compact hash-based value noise + fbm ----------------------------------
-function hash(x, y) {
+const hash = (x, y) => {
   let n = (Math.imul(x, 374761393) + Math.imul(y, 668265263) + Math.imul(seed, 2246822519)) | 0;
   n = Math.imul(n ^ (n >> 13), 1274126177);
   n = n ^ (n >> 16);
   return (n & 0xffff) / 0xffff;
-}
+};
 
-function valueNoise(x, y) {
+const valueNoise = (x, y) => {
   const xi = Math.floor(x), yi = Math.floor(y);
   const xf = x - xi, yf = y - yi;
   const u = xf * xf * (3 - 2 * xf);
@@ -111,9 +103,9 @@ function valueNoise(x, y) {
   const a = hash(xi, yi), b = hash(xi + 1, yi);
   const c = hash(xi, yi + 1), d = hash(xi + 1, yi + 1);
   return lerp(lerp(a, b, u), lerp(c, d, u), v);
-}
+};
 
-function fbm(x, y) {
+const fbm = (x, y) => {
   let sum = 0, amp = 0.5, freq = 1;
   for (let o = 0; o < 4; o++) {
     sum += valueNoise(x * freq, y * freq) * amp;
@@ -121,4 +113,4 @@ function fbm(x, y) {
     amp *= 0.5;
   }
   return sum; // ~0..0.9375
-}
+};
