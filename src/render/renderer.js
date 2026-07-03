@@ -102,18 +102,14 @@ export const buildTerrain = (r) => {
       // Directional hillshade from the local slope.
       const gx = T.elevBilinear(wx + d, wy) - e;
       const gy = T.elevBilinear(wx, wy + d) - e;
-      let shade = 1 + (gx * LX + gy * LY) * HILLSHADE;
-      if (shade < 0.6) shade = 0.6; else if (shade > 1.4) shade = 1.4;
+      const shade = Math.min(Math.max(1 + (gx * LX + gy * LY) * HILLSHADE, 0.6), 1.4);
       r0 *= shade; g0 *= shade; b0 *= shade;
 
-      // Brush overlay: blend toward a dark, muted green.
-      const c = T.coverBilinear(wx, wy);
-      if (c > 0.001) {
-        const k = c * 0.7;
-        r0 = lerp(r0, 38, k);
-        g0 = lerp(g0, 66, k);
-        b0 = lerp(b0, 40, k);
-      }
+      // Brush overlay: blend toward a dark, muted green (k=0 leaves color as-is).
+      const k = T.coverBilinear(wx, wy) * 0.7;
+      r0 = lerp(r0, 38, k);
+      g0 = lerp(g0, 66, k);
+      b0 = lerp(b0, 40, k);
 
       data[i] = r0; data[i + 1] = g0; data[i + 2] = b0; data[i + 3] = 255;
     }

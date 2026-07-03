@@ -9,6 +9,7 @@
 
 const INF = 1e9;
 const lerp = (a, b, t) => a + (b - a) * t;
+const clampCell = (v, max) => (v < 0 ? 0 : v >= max ? max - 1 : v);
 
 export const create = (worldW, worldH, cell) => {
   const cols = Math.ceil(worldW / cell) + 1;
@@ -34,21 +35,17 @@ export const setBlocked = (ff, fn) => {
 };
 
 const cellIndex = (ff, wx, wy) => {
-  let cx = (wx / ff.cell) | 0;
-  let cy = (wy / ff.cell) | 0;
-  if (cx < 0) cx = 0; else if (cx >= ff.cols) cx = ff.cols - 1;
-  if (cy < 0) cy = 0; else if (cy >= ff.rows) cy = ff.rows - 1;
+  const cx = clampCell((wx / ff.cell) | 0, ff.cols);
+  const cy = clampCell((wy / ff.cell) | 0, ff.rows);
   return cy * ff.cols + cx;
 };
 
-// Enqueue an unvisited, passable neighbor. Returns the new tail.
-const visit = (ff, n, nd, tail) => {
-  if (ff.blocked[n]) return tail;
-  if (ff.integ[n] <= nd) return tail; // already reached at <= distance
-  ff.integ[n] = nd;
-  ff.queue[tail++] = n;
-  return tail;
-};
+// Enqueue an unvisited, passable neighbor. Returns the new tail (unchanged if the
+// cell is blocked or already reached at ≤ distance).
+const visit = (ff, n, nd, tail) =>
+  ff.blocked[n] || ff.integ[n] <= nd
+    ? tail
+    : (ff.integ[n] = nd, ff.queue[tail] = n, tail + 1);
 
 // Rebuild the field for a new goal position.
 export const compute = (ff, goalX, goalY) => {
@@ -56,8 +53,8 @@ export const compute = (ff, goalX, goalY) => {
   integ.fill(INF);
 
   let start = cellIndex(ff, goalX, goalY);
-  if (blocked[start]) start = nearestPassable(ff, start);
-  if (start < 0) { dirX.fill(0); dirY.fill(0); return; }
+  blocked[start] && (start = nearestPassable(ff, start));
+  if (start < 0) return void (dirX.fill(0), dirY.fill(0)); // unreachable goal
 
   // BFS (uniform cost, 4-neighbor) → integration/distance field.
   integ[start] = 0;
@@ -68,10 +65,10 @@ export const compute = (ff, goalX, goalY) => {
     const nd = integ[c] + 1;
     const cx = c % cols;
     const cy = (c / cols) | 0;
-    if (cx > 0)        tail = visit(ff, c - 1, nd, tail);
-    if (cx < cols - 1) tail = visit(ff, c + 1, nd, tail);
-    if (cy > 0)        tail = visit(ff, c - cols, nd, tail);
-    if (cy < rows - 1) tail = visit(ff, c + cols, nd, tail);
+    cx > 0        && (tail = visit(ff, c - 1, nd, tail));
+    cx < cols - 1 && (tail = visit(ff, c + 1, nd, tail));
+    cy > 0        && (tail = visit(ff, c - cols, nd, tail));
+    cy < rows - 1 && (tail = visit(ff, c + cols, nd, tail));
   }
 
   buildFlow(ff);
@@ -83,7 +80,7 @@ const buildFlow = (ff) => {
   for (let cy = 0; cy < rows; cy++) {
     for (let cx = 0; cx < cols; cx++) {
       const c = cy * cols + cx;
-      if (blocked[c] || integ[c] >= INF) { dirX[c] = 0; dirY[c] = 0; continue; }
+      if (blocked[c] || integ[c] >= INF) { dirX[c] = dirY[c] = 0; continue; }
       let best = integ[c];
       let bx = 0, by = 0;
       for (let oy = -1; oy <= 1; oy++) {
@@ -94,16 +91,13 @@ const buildFlow = (ff) => {
           const nx = cx + ox;
           if (nx < 0 || nx >= cols) continue;
           const v = integ[ny * cols + nx];
-          if (v < best) { best = v; bx = ox; by = oy; }
+          v < best && (best = v, bx = ox, by = oy);
         }
       }
-      if (bx || by) {
-        const inv = 1 / Math.hypot(bx, by);
-        dirX[c] = bx * inv;
-        dirY[c] = by * inv;
-      } else {
-        dirX[c] = 0; dirY[c] = 0;
-      }
+      // When no lower neighbor exists bx=by=0, so inv=0 zeroes the direction.
+      const inv = bx || by ? 1 / Math.hypot(bx, by) : 0;
+      dirX[c] = bx * inv;
+      dirY[c] = by * inv;
     }
   }
 };
@@ -114,12 +108,12 @@ export const sampleDir = (ff, wx, wy, out) => {
   const { cols, rows, cell, dirX, dirY } = ff;
   const fx = wx / cell;
   const fy = wy / cell;
-  let x0 = Math.floor(fx);
-  let y0 = Math.floor(fy);
-  const tx = fx - x0;
-  const ty = fy - y0;
-  if (x0 < 0) x0 = 0; else if (x0 > cols - 1) x0 = cols - 1;
-  if (y0 < 0) y0 = 0; else if (y0 > rows - 1) y0 = rows - 1;
+  const fx0 = Math.floor(fx);
+  const fy0 = Math.floor(fy);
+  const tx = fx - fx0;
+  const ty = fy - fy0;
+  const x0 = clampCell(fx0, cols);
+  const y0 = clampCell(fy0, rows);
   const x1 = x0 + 1 < cols ? x0 + 1 : x0;
   const y1 = y0 + 1 < rows ? y0 + 1 : y0;
   const i00 = y0 * cols + x0, i01 = y0 * cols + x1;
@@ -127,8 +121,9 @@ export const sampleDir = (ff, wx, wy, out) => {
   const dx = lerp(lerp(dirX[i00], dirX[i01], tx), lerp(dirX[i10], dirX[i11], tx), ty);
   const dy = lerp(lerp(dirY[i00], dirY[i01], tx), lerp(dirY[i10], dirY[i11], tx), ty);
   const m = Math.hypot(dx, dy);
-  if (m > 0.001) { out.x = dx / m; out.y = dy / m; }
-  else { out.x = 0; out.y = 0; }
+  const k = m > 0.001 ? 1 / m : 0; // zero at the goal / unreachable cells
+  out.x = dx * k;
+  out.y = dy * k;
 };
 
 // If the goal landed in water, spiral outward to the closest passable cell.

@@ -39,25 +39,23 @@ export const spawn = (sx, sy, t, ut) => {
 
 export const reset = () => { count = 0; };
 
+// Copy every field of unit `src` into slot `dst`.
+const copyUnit = (dst, src) => {
+  px[dst] = px[src]; py[dst] = py[src];
+  x[dst] = x[src]; y[dst] = y[src];
+  vx[dst] = vx[src]; vy[dst] = vy[src];
+  hp[dst] = hp[src]; morale[dst] = morale[src];
+  team[dst] = team[src]; type[dst] = type[src]; state[dst] = state[src];
+  cooldown[dst] = cooldown[src];
+};
+
 // Remove units flagged DEAD by swapping the last live unit into their slot.
 // O(count), allocation-free. The grid is rebuilt every tick so shifted indices
 // are harmless, and prev-position is refreshed at the top of the next step.
+// `--count` shrinks the live range in place; a DEAD slot pulls the (new) last
+// unit down over it and holds `i` so the pulled-in unit is checked next.
 export const compactDead = () => {
   let i = 0;
-  while (i < count) {
-    if (state[i] === STATE.DEAD) {
-      const j = count - 1;
-      if (i !== j) {
-        px[i] = px[j]; py[i] = py[j];
-        x[i] = x[j]; y[i] = y[j];
-        vx[i] = vx[j]; vy[i] = vy[j];
-        hp[i] = hp[j]; morale[i] = morale[j];
-        team[i] = team[j]; type[i] = type[j]; state[i] = state[j];
-        cooldown[i] = cooldown[j];
-      }
-      count--;
-    } else {
-      i++;
-    }
-  }
+  while (i < count)
+    state[i] === STATE.DEAD ? (i !== --count && copyUnit(i, count)) : i++;
 };

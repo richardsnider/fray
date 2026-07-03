@@ -59,8 +59,7 @@ export const zoomAt = (cam, factor, sx, sy) => {
 const clampZoom = (cam) => {
   // Min zoom = enough that the view never exceeds the world in either axis.
   const minZoom = Math.max(cam.viewW / cam.worldW, cam.viewH / cam.worldH);
-  if (cam.zoom < minZoom) cam.zoom = minZoom;
-  if (cam.zoom > MAX_ZOOM) cam.zoom = MAX_ZOOM;
+  cam.zoom = Math.min(Math.max(cam.zoom, minZoom), MAX_ZOOM);
 };
 
 const clamp = (cam) => {

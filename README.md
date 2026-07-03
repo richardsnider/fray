@@ -77,6 +77,12 @@ isn't genuinely needed. This keeps state transparent (trivial to snapshot for
 determinism) and the sim easy to test as pure-ish functions. The performance
 story is unchanged — it's the SoA typed arrays, not the object model.
 
+Control flow leans on expressions over statements: **`cond && (a, b)`** for a
+conditional side effect, **`x = c ? p : q`** (chained for clamps) for value
+selection, `Math.min/Math.max` for range-clamping. `if` is reserved for the cases
+where it's genuinely required — a guard that `return`/`continue`s, or a block that
+declares a local `const` for multi-statement math.
+
 ## Vision & success criteria
 
 **North star:** a lightweight, vanilla-JS, browser battle simulator of ~1450

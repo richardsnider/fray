@@ -47,13 +47,10 @@ export const generate = (s = 0) => {
 };
 
 // --- sampling --------------------------------------------------------------
-export const cellOf = (wx, wy) => {
-  let cx = (wx / CELL) | 0;
-  let cy = (wy / CELL) | 0;
-  if (cx < 0) cx = 0; else if (cx >= cols) cx = cols - 1;
-  if (cy < 0) cy = 0; else if (cy >= rows) cy = rows - 1;
-  return cy * cols + cx;
-};
+const clampX = (cx) => (cx < 0 ? 0 : cx >= cols ? cols - 1 : cx);
+const clampY = (cy) => (cy < 0 ? 0 : cy >= rows ? rows - 1 : cy);
+
+export const cellOf = (wx, wy) => clampY((wy / CELL) | 0) * cols + clampX((wx / CELL) | 0);
 
 export const isWaterAt = (wx, wy) => water[cellOf(wx, wy)] === 1;
 export const elevBilinear = (wx, wy) => bilinear(elevation, wx, wy);
@@ -62,12 +59,12 @@ export const coverBilinear = (wx, wy) => bilinear(cover, wx, wy);
 const bilinear = (grid, wx, wy) => {
   const fx = wx / CELL;
   const fy = wy / CELL;
-  let x0 = Math.floor(fx);
-  let y0 = Math.floor(fy);
-  const tx = fx - x0;
-  const ty = fy - y0;
-  if (x0 < 0) x0 = 0; else if (x0 > cols - 1) x0 = cols - 1;
-  if (y0 < 0) y0 = 0; else if (y0 > rows - 1) y0 = rows - 1;
+  const fx0 = Math.floor(fx);
+  const fy0 = Math.floor(fy);
+  const tx = fx - fx0;
+  const ty = fy - fy0;
+  const x0 = clampX(fx0);
+  const y0 = clampY(fy0);
   const x1 = x0 + 1 < cols ? x0 + 1 : x0;
   const y1 = y0 + 1 < rows ? y0 + 1 : y0;
   const a = grid[y0 * cols + x0];
@@ -82,8 +79,7 @@ const clamp01 = (v) => (v < 0 ? 0 : v > 1 ? 1 : v);
 const lerp = (a, b, t) => a + (b - a) * t;
 
 const smoothstep = (e0, e1, x) => {
-  let t = (x - e0) / (e1 - e0);
-  if (t < 0) t = 0; else if (t > 1) t = 1;
+  const t = clamp01((x - e0) / (e1 - e0));
   return t * t * (3 - 2 * t);
 };
 

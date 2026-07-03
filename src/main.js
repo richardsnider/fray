@@ -56,9 +56,8 @@ let fps = 0;
 let simMs = 0;
 
 const frame = (now) => {
-  let dt = now - last;
+  const dt = Math.min(now - last, 250); // avoid spiral-of-death after a tab stall
   last = now;
-  if (dt > 250) dt = 250; // avoid spiral-of-death after a tab stall
   acc += dt;
 
   input.update(dt / 1000);

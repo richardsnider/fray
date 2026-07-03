@@ -24,14 +24,10 @@ export const create = (canvas, cam, world) => {
 
   canvas.addEventListener('mousedown', (e) => {
     const p = localPos(e);
-    if (e.button === 0) {
-      // Left click: command, in world coordinates.
-      world.setManualTarget(Camera.screenToWorldX(cam, p.x), Camera.screenToWorldY(cam, p.y));
-    } else if (e.button === 1 || e.button === 2) {
-      dragging = true;
-      lastX = p.x;
-      lastY = p.y;
-    }
+    // Left click: command in world coords. Middle/right: start a pan drag.
+    e.button === 0
+      ? world.setManualTarget(Camera.screenToWorldX(cam, p.x), Camera.screenToWorldY(cam, p.y))
+      : (e.button === 1 || e.button === 2) && (dragging = true, lastX = p.x, lastY = p.y);
   });
 
   window.addEventListener('mousemove', (e) => {
@@ -57,20 +53,18 @@ export const create = (canvas, cam, world) => {
     const t = e.target;
     return t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable);
   };
-  window.addEventListener('keydown', (e) => { if (!typing(e)) keys.add(e.key.toLowerCase()); });
+  window.addEventListener('keydown', (e) => { !typing(e) && keys.add(e.key.toLowerCase()); });
   window.addEventListener('keyup', (e) => keys.delete(e.key.toLowerCase()));
 
   // Apply held-key panning; call once per rendered frame.
   const update = (dt) => {
     let dx = 0, dy = 0;
-    if (keys.has('a') || keys.has('arrowleft')) dx -= 1;
-    if (keys.has('d') || keys.has('arrowright')) dx += 1;
-    if (keys.has('w') || keys.has('arrowup')) dy -= 1;
-    if (keys.has('s') || keys.has('arrowdown')) dy += 1;
-    if (dx || dy) {
-      const speed = PAN_KEYS_SPEED * dt;
-      Camera.panByWorld(cam, dx * speed, dy * speed);
-    }
+    (keys.has('a') || keys.has('arrowleft')) && (dx -= 1);
+    (keys.has('d') || keys.has('arrowright')) && (dx += 1);
+    (keys.has('w') || keys.has('arrowup')) && (dy -= 1);
+    (keys.has('s') || keys.has('arrowdown')) && (dy += 1);
+    const speed = PAN_KEYS_SPEED * dt;
+    (dx || dy) && Camera.panByWorld(cam, dx * speed, dy * speed);
   };
 
   return { update };
