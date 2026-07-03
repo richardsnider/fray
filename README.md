@@ -61,13 +61,106 @@ src/
     input.js         player command layer
 ```
 
+## Vision & success criteria
+
+**North star:** a lightweight, vanilla-JS, browser battle simulator of ~1450
+European (pre-gunpowder) warfare that sits *between a simulation and an RTS*. It
+largely **plays itself**; the player is a rogue-ish commander who drops in and
+directs units rather than micromanaging everything.
+
+Checklist to measure the finished product against (✅ = met today, ⬜ = pending):
+
+**Scope & feel**
+- ⬜ Plays itself — uncommanded units keep acting; the battle never just freezes
+- ⬜ Enemy generals reactivate any troop **idle > 30 s** with a fresh objective
+- ⬜ Player is a *drop-in* commander (inject/order own units, not command all)
+- ⬜ Reads as a sim ⟷ RTS hybrid, **not** a Civ-style 4X
+- ✅ Setting is ~1450 Europe, pre-gunpowder (no firearms/artillery)
+
+**Combatants (pre-gunpowder arms)**
+- ⬜ Heavy armored cavalry · longbow archers · melee/pike infantry
+- ⬜ Rock-paper-scissors interplay (pike > cavalry > archers > pike, roughly)
+
+**Systemic warfare**
+- ✅ Morale and routing
+- ⬜ Supply lines · razing farmland · raiding villages · sieges
+
+**Scale, presentation & tech (deliberately basic)**
+- ✅ Thousands of dots on screen, smoothly, in-browser
+- ✅ Green/brown noise ground · blue impassable water (no naval) · slope shading ·
+  semi-transparent brush · one dot per soldier
+- ✅ Vanilla JS, no big libraries; Canvas now, WebGL reserved as a drop-in swap
+
+**Explicit non-goals:** gunpowder, naval warfare, a 4X economy / tech tree /
+city-building, and rigid formation micro. Supply is about *denial and morale*,
+not production.
+
 ## Roadmap
 
-- ~~Combat + morale/routing (panic contagion via the spatial grid)~~ ✅ done
-- ~~Camera (pan/zoom) so the world can be larger than the screen~~ ✅ done
-- ~~Terrain effects (elevation on speed/charge, water, brush)~~ ✅ done
-  *(cover vs. archers lands with unit types)*
-- ~~Flow-field pathfinding for large groups~~ ✅ done
-- Unit types (heavy cavalry, longbow, pike/melee)
-- AI director: idle groups get objectives (raid, forage, screen, siege)
-- Supply lines, razing farmland, raiding villages, sieges
+Done: **combat/morale** ✅ · **camera** ✅ · **terrain effects** ✅ ·
+**flow-field pathfinding** ✅. Remaining work, in dependency order:
+
+### 1. Unit types — heavy cavalry · longbow · pike/melee
+
+*Why first: the director's objectives and the strategic layer are only
+interesting once units have distinct roles.*
+
+- **Data-driven stats.** The `type` field already exists in the SoA store
+  (currently all 0). Add a `UnitType` enum and a per-type stat table in
+  `config.js` (hp, speed, melee dps, range, armor, charge) — balancing becomes
+  one table edit. Hot-loop reads stay cheap: small const arrays indexed by type.
+- **Rock-paper-scissors** via a 2-D `damageMultiplier[attacker][target]` table
+  (e.g. pike bonus vs cavalry, cavalry bonus vs archers/routers, archers feeble
+  in melee).
+- **Longbows = ranged.** *Assumption:* hitscan first, not projectile physics —
+  each archer on a cooldown picks the nearest enemy in range and applies damage,
+  reduced by the target's **brush cover** (this is where the deferred
+  cover-vs-archers mechanic lands). Projectile entities are a later visual
+  upgrade only if needed.
+- **Cavalry charge** as a transient bonus: high impact + morale shock when a
+  fast-moving horse unit contacts an enemy head-on after a straight run, then
+  decays to normal melee.
+- **Rendering:** distinguish types by dot tint/size within the pixel aesthetic
+  (e.g. cavalry a touch larger).
+- *Assumptions:* fixed 3-type roster to start; formations stay **emergent**
+  (separation), not rigid ranks.
+
+### 2. AI director — the "plays itself" brain
+
+*Depends on unit types (objectives reference roles).*
+
+- **Groups, not one blob.** Replace "whole team seeks one centroid" with a
+  handful of **groups** per side (spatial clustering or fixed bands), each with
+  its own objective + flow field (we already run N fields cheaply).
+- **Per-side general:** a utility planner that scores candidate objectives
+  (engage enemy group, defend, raid village, forage supply, screen a flank,
+  besiege) by threat / opportunity / supply, and assigns the best to each group.
+- **The 30-second rule:** each group tracks time since its last meaningful
+  action; a bot general reassigns any group idle past the threshold (config
+  knob). *Assumption:* the **player's** idle units stay put — only bot generals
+  auto-utilize idle troops; the player is exempt.
+- *Assumptions:* coarse objectives (go-to / attack / raid / defend / besiege),
+  not choreography; ~4–12 groups per side to keep planning + flow-fields cheap;
+  planner runs on a fixed cadence with seeded RNG so the sim stays deterministic.
+
+### 3. Strategic layer — supply · razing · raiding · sieges
+
+*Depends on the director (these are objectives it pursues).*
+
+- **Map features as sparse entities** (not per-pixel): villages, farmland,
+  supply depots, fortifications — small arrays of position + state
+  (intact/raided/razed, supply value, fortification HP + garrison).
+- **Supply** as denial: each side's supply level is fed by held
+  villages/depots; a unit's effective supply falls with distance from a friendly
+  source (approximate via a supply flow field / nearest-source distance). Low
+  supply **drains morale** — it plugs straight into the existing morale system
+  rather than adding a resource economy.
+- **Razing / raiding:** objectives where units dwelling next to a farmland or
+  village tile flip its state over time, cutting the enemy's supply value.
+  Visuals: razed farmland changes color, raided village shows damage.
+- **Sieges:** fortified points have HP + a garrison and big defensive bonuses;
+  besieging = encircle + attrition, or assault. *Assumption:* walls are
+  impassable terrain segments plus a fortification feature with HP — attrition
+  and assault resolution, no breach animation.
+- *Assumptions:* the strategic features are a thin layer **over** the tactical
+  sim, not a second game mode; still no economy/production; naval stays out.
