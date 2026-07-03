@@ -4,7 +4,7 @@
 import * as U from './units.js';
 import { SpatialGrid } from './spatialGrid.js';
 import {
-  MAX_UNITS, ARMY_SIZE, MAX_SPEED, SEEK_ACCEL, SEP_RADIUS, SEP_ACCEL, DAMPING,
+  MAX_UNITS, WORLD_W, WORLD_H, ARMY_SIZE, MAX_SPEED, SEEK_ACCEL, SEP_RADIUS, SEP_ACCEL, DAMPING,
   ATTACK_RANGE, ATTACK_DPS, FLEE_SPEED_MULT,
   MORALE_MAX, ROUT_THRESHOLD, RALLY_THRESHOLD, MORALE_REGEN,
   FEAR_OUTNUMBERED, FEAR_PANIC, HIT_FEAR,
@@ -12,8 +12,8 @@ import {
 
 const { ACTIVE, ROUTING, DEAD } = U.STATE;
 
-let W = 0;
-let H = 0;
+const W = WORLD_W;
+const H = WORLD_H;
 let grid = null;
 
 // Incoming damage is accumulated here during the scan and applied after the full
@@ -28,18 +28,10 @@ let manualTarget0 = null;
 // Live counts for the HUD, refreshed each tick.
 const stats = { team0: 0, team1: 0 };
 
-export function init(width, height) {
-  W = width;
-  H = height;
+export function init() {
   grid = new SpatialGrid(W, H, SEP_RADIUS);
   U.reset();
   spawnArmies();
-}
-
-export function resize(width, height) {
-  W = width;
-  H = height;
-  grid.resize(W, H);
 }
 
 export function setManualTarget(x, y) {

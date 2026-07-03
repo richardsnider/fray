@@ -26,11 +26,16 @@ Any static server works.
 - Melee combat, morale, and routing with panic contagion (`src/sim/world.js`).
 - `ImageData` pixel renderer with value-noise terrain (`src/render/renderer.js`).
 
-Two armies (silver vs. red) spawn and march into each other. Units in reach trade
-damage; morale drains from being outnumbered, taking hits, and standing near
-fleeing friends. Below a threshold a unit **routs** (dim dots) and runs; if it
-reaches safety and recovers, it re-forms. **Click** to redirect your (silver)
-army. The HUD shows per-team survivors, FPS, and sim time per frame.
+- Camera over a fixed world larger than the screen (`src/render/camera.js`).
+
+Two armies (silver vs. red) spawn and march into each other on a 3200×2000 world.
+Units in reach trade damage; morale drains from being outnumbered, taking hits,
+and standing near fleeing friends. Below a threshold a unit **routs** (dim dots)
+and runs; if it reaches safety and recovers, it re-forms. The HUD shows per-team
+survivors, FPS, zoom, and sim time per frame.
+
+**Controls:** left-click orders your (silver) army · right-drag or WASD/arrows pan
+· mouse wheel zooms toward the cursor.
 
 ## Architecture
 
@@ -43,7 +48,8 @@ src/
     spatialGrid.js   linked-list uniform grid
     world.js         steering + integration
   render/
-    renderer.js      Canvas/ImageData drawing + terrain
+    camera.js        viewport: world<->screen transform, pan/zoom, clamping
+    renderer.js      Canvas drawing (terrain blit + culled units)
   input/
     input.js         player command layer
 ```
@@ -51,7 +57,7 @@ src/
 ## Roadmap
 
 - ~~Combat + morale/routing (panic contagion via the spatial grid)~~ ✅ done
-- Camera (pan/zoom) so the world can be larger than the screen
+- ~~Camera (pan/zoom) so the world can be larger than the screen~~ ✅ done
 - Terrain effects (elevation on speed/charge, cover vs. archers, water)
 - Flow-field pathfinding for large groups
 - Unit types (heavy cavalry, longbow, pike/melee)
