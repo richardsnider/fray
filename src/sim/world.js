@@ -2,12 +2,14 @@
 // can later run in a Web Worker or faster-than-realtime for balance testing.
 
 import * as U from './units.js';
+import * as T from './terrain.js';
 import { SpatialGrid } from './spatialGrid.js';
 import {
   MAX_UNITS, WORLD_W, WORLD_H, ARMY_SIZE, MAX_SPEED, SEEK_ACCEL, SEP_RADIUS, SEP_ACCEL, DAMPING,
   ATTACK_RANGE, ATTACK_DPS, FLEE_SPEED_MULT,
   MORALE_MAX, ROUT_THRESHOLD, RALLY_THRESHOLD, MORALE_REGEN,
   FEAR_OUTNUMBERED, FEAR_PANIC, HIT_FEAR,
+  SLOPE_SPEED, COVER_SLOW, HEIGHT_DMG, WATER_LOOK, WATER_AVOID,
 } from '../config.js';
 
 const { ACTIVE, ROUTING, DEAD } = U.STATE;
@@ -29,6 +31,7 @@ let manualTarget0 = null;
 const stats = { team0: 0, team1: 0 };
 
 export function init() {
+  T.generate();
   grid = new SpatialGrid(W, H, SEP_RADIUS);
   U.reset();
   spawnArmies();
@@ -43,11 +46,19 @@ export function getStats() {
 }
 
 function spawnArmies() {
+  spawnArmy(W * 0.06, W * 0.24, 0);
+  spawnArmy(W * 0.76, W * 0.94, 1);
+}
+
+function spawnArmy(x0, x1, team) {
   for (let i = 0; i < ARMY_SIZE; i++) {
-    U.spawn(rand(W * 0.06, W * 0.24), rand(H * 0.2, H * 0.8), 0);
-  }
-  for (let i = 0; i < ARMY_SIZE; i++) {
-    U.spawn(rand(W * 0.76, W * 0.94), rand(H * 0.2, H * 0.8), 1);
+    let x, y, tries = 0;
+    // Reject spots that landed in water so nobody spawns stranded.
+    do {
+      x = rand(x0, x1);
+      y = rand(H * 0.2, H * 0.8);
+    } while (T.isWaterAt(x, y) && ++tries < 20);
+    U.spawn(x, y, team);
   }
 }
 
@@ -141,7 +152,11 @@ export function step(dt) {
     // --- combat: active units strike the nearest enemy in reach ---------------
     let engaged = false;
     if (statei === ACTIVE && ceIdx !== -1 && ceD2 <= attackR2) {
-      dmg[ceIdx] += ATTACK_DPS * dt;
+      // Attacking downhill (higher ground than the target) hits harder.
+      const dh = T.elevation[T.cellOf(xi, yi)] - T.elevation[T.cellOf(U.x[ceIdx], U.y[ceIdx])];
+      let bonus = 1 + dh * HEIGHT_DMG;
+      if (bonus < 0.5) bonus = 0.5; else if (bonus > 1.6) bonus = 1.6;
+      dmg[ceIdx] += ATTACK_DPS * dt * bonus;
       engaged = true;
     }
 
@@ -187,19 +202,52 @@ export function step(dt) {
     ax += sx * SEP_ACCEL;
     ay += sy * SEP_ACCEL;
 
+    // Shoreline avoidance: steer back if open water lies just ahead.
+    const curSp = Math.hypot(U.vx[i], U.vy[i]);
+    if (curSp > 1) {
+      const inv = 1 / curSp;
+      const hx = U.vx[i] * inv;
+      const hy = U.vy[i] * inv;
+      if (T.isWaterAt(xi + hx * WATER_LOOK, yi + hy * WATER_LOOK)) {
+        ax -= hx * WATER_AVOID;
+        ay -= hy * WATER_AVOID;
+      }
+    }
+
     let nvx = (U.vx[i] + ax * dt) * DAMPING;
     let nvy = (U.vy[i] + ay * dt) * DAMPING;
     const maxSp = statei === ROUTING ? MAX_SPEED * FLEE_SPEED_MULT : MAX_SPEED;
-    const sp = Math.hypot(nvx, nvy);
+    let sp = Math.hypot(nvx, nvy);
     if (sp > maxSp) {
       const k = maxSp / sp;
       nvx *= k; nvy *= k;
+      sp = maxSp;
     }
     U.vx[i] = nvx;
     U.vy[i] = nvy;
 
-    let nx = xi + nvx * dt;
-    let ny = yi + nvy * dt;
+    // Terrain speed factor: brush slows; uphill slows, downhill speeds up.
+    let tf = 1 - T.cover[T.cellOf(xi, yi)] * COVER_SLOW;
+    if (sp > 0.001) {
+      const tcx = tClampX((xi / T.CELL) | 0);
+      const tcy = tClampY((yi / T.CELL) | 0);
+      const gx = T.elevation[tcy * T.cols + tClampX(tcx + 1)] - T.elevation[tcy * T.cols + tClampX(tcx - 1)];
+      const gy = T.elevation[tClampY(tcy + 1) * T.cols + tcx] - T.elevation[tClampY(tcy - 1) * T.cols + tcx];
+      const slopeAlong = (gx * nvx + gy * nvy) / sp; // >0 = uphill
+      tf -= slopeAlong * SLOPE_SPEED;
+    }
+    if (tf < 0.35) tf = 0.35; else if (tf > 1.35) tf = 1.35;
+
+    let nx = xi + nvx * tf * dt;
+    let ny = yi + nvy * tf * dt;
+
+    // Water is impassable: try to slide along the shore, else hold position.
+    if (T.isWaterAt(nx, ny)) {
+      if (!T.isWaterAt(nx, yi)) { ny = yi; U.vy[i] = 0; }
+      else if (!T.isWaterAt(xi, ny)) { nx = xi; U.vx[i] = 0; }
+      else { nx = xi; ny = yi; U.vx[i] = 0; U.vy[i] = 0; }
+    }
+
     if (nx < 0) nx = 0; else if (nx > W - 1) nx = W - 1;
     if (ny < 0) ny = 0; else if (ny > H - 1) ny = H - 1;
     U.x[i] = nx;
@@ -234,4 +282,16 @@ function clampCell(c, max) {
   if (c < 0) return 0;
   if (c >= max) return max - 1;
   return c;
+}
+
+function tClampX(cx) {
+  if (cx < 0) return 0;
+  if (cx >= T.cols) return T.cols - 1;
+  return cx;
+}
+
+function tClampY(cy) {
+  if (cy < 0) return 0;
+  if (cy >= T.rows) return T.rows - 1;
+  return cy;
 }

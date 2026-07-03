@@ -22,6 +22,16 @@ export const SEP_RADIUS = 6;            // also the spatial-grid cell size
 export const SEP_ACCEL = 220;
 export const DAMPING = 0.86;            // per-tick velocity retention
 
+// Terrain. Stored on a coarse grid (one cell per TERRAIN_CELL world units) and
+// sampled by both the sim and the renderer.
+export const TERRAIN_CELL = 16;
+export const WATER_LEVEL = 0.30;        // elevation below this is impassable water
+export const SLOPE_SPEED = 26;          // uphill slows / downhill speeds movement
+export const COVER_SLOW = 0.45;         // max fractional slowdown in dense brush
+export const HEIGHT_DMG = 2.0;          // downhill melee damage bonus scale
+export const WATER_LOOK = 22;           // look-ahead distance for shoreline avoidance
+export const WATER_AVOID = 160;         // steering force away from water ahead
+
 // Combat.
 export const ATTACK_RANGE = 5;          // melee reach (world units)
 export const ATTACK_DPS = 16;           // hp/sec dealt to the engaged target

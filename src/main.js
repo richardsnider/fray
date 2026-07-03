@@ -12,10 +12,12 @@ import { TICK_MS, WORLD_W, WORLD_H } from './config.js';
 
 const canvas = document.getElementById('c');
 const hud = document.getElementById('hud');
+
+// Generate the world (incl. terrain grids) before the renderer bakes terrain.
+world.init();
+
 const renderer = new Renderer(canvas);
 const camera = new Camera(WORLD_W, WORLD_H, renderer.width, renderer.height);
-
-world.init();
 const input = new Input(canvas, camera, world);
 
 window.addEventListener('resize', () => {
