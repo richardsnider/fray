@@ -35,8 +35,9 @@ and runs; if it reaches safety and recovers, it re-forms.
 
 The terrain is real: **water is impassable** (units slide along shorelines),
 **hills slow the climb and speed the descent**, **brush slows movement**, and
-**attacking downhill hits harder**. The HUD shows per-team survivors, FPS, zoom,
-and sim time per frame.
+**attacking downhill hits harder**. Marching armies follow a per-team **flow
+field** that routes them *around* water toward the objective — including wherever
+you click. The HUD shows per-team survivors, FPS, zoom, and sim time per frame.
 
 **Controls:** left-click orders your (silver) army · right-drag or WASD/arrows pan
 · mouse wheel zooms toward the cursor.
@@ -51,6 +52,7 @@ src/
     units.js         SoA typed-array unit store
     spatialGrid.js   linked-list uniform grid
     terrain.js       elevation/water/brush grids + sampling
+    flowField.js     BFS flow-field pathfinding (one field per army)
     world.js         steering, combat, morale, terrain integration
   render/
     camera.js        viewport: world<->screen transform, pan/zoom, clamping
@@ -65,7 +67,7 @@ src/
 - ~~Camera (pan/zoom) so the world can be larger than the screen~~ ✅ done
 - ~~Terrain effects (elevation on speed/charge, water, brush)~~ ✅ done
   *(cover vs. archers lands with unit types)*
-- Flow-field pathfinding for large groups
+- ~~Flow-field pathfinding for large groups~~ ✅ done
 - Unit types (heavy cavalry, longbow, pike/melee)
 - AI director: idle groups get objectives (raid, forage, screen, siege)
 - Supply lines, razing farmland, raiding villages, sieges

@@ -4,12 +4,14 @@
 import * as U from './units.js';
 import * as T from './terrain.js';
 import { SpatialGrid } from './spatialGrid.js';
+import { FlowField } from './flowField.js';
 import {
   MAX_UNITS, WORLD_W, WORLD_H, ARMY_SIZE, MAX_SPEED, SEEK_ACCEL, SEP_RADIUS, SEP_ACCEL, DAMPING,
   ATTACK_RANGE, ATTACK_DPS, FLEE_SPEED_MULT,
   MORALE_MAX, ROUT_THRESHOLD, RALLY_THRESHOLD, MORALE_REGEN,
   FEAR_OUTNUMBERED, FEAR_PANIC, HIT_FEAR,
   SLOPE_SPEED, COVER_SLOW, HEIGHT_DMG, WATER_LOOK, WATER_AVOID,
+  FLOW_CELL, FLOW_UPDATE_TICKS,
 } from '../config.js';
 
 const { ACTIVE, ROUTING, DEAD } = U.STATE;
@@ -17,6 +19,11 @@ const { ACTIVE, ROUTING, DEAD } = U.STATE;
 const W = WORLD_W;
 const H = WORLD_H;
 let grid = null;
+
+// One flow field per team, routing around water toward that team's objective.
+const flows = [null, null];
+let flowTick = 0;
+const flowDir = { x: 0, y: 0 }; // reused scratch to avoid per-unit allocation
 
 // Incoming damage is accumulated here during the scan and applied after the full
 // pass, so kill resolution doesn't depend on unit iteration order.
@@ -33,6 +40,12 @@ const stats = { team0: 0, team1: 0 };
 export function init() {
   T.generate();
   grid = new SpatialGrid(W, H, SEP_RADIUS);
+  const blocked = (wx, wy) => T.isWaterAt(wx, wy);
+  for (let t = 0; t < flows.length; t++) {
+    flows[t] = new FlowField(W, H, FLOW_CELL);
+    flows[t].setBlocked(blocked);
+  }
+  flowTick = 0;
   U.reset();
   spawnArmies();
 }
@@ -96,6 +109,14 @@ export function step(dt) {
   U.py.set(U.y.subarray(0, count));
 
   updateTargets();
+
+  // Rebuild each team's flow field toward its objective, a few times a second.
+  if (flowTick % FLOW_UPDATE_TICKS === 0) {
+    flows[0].compute(targets[0].x, targets[0].y);
+    flows[1].compute(targets[1].x, targets[1].y);
+  }
+  flowTick++;
+
   grid.build(count, U.x, U.y);
 
   const { cell, cols, rows, heads, next } = grid;
@@ -192,12 +213,20 @@ export function step(dt) {
       ax = (ax / d) * SEEK_ACCEL;
       ay = (ay / d) * SEEK_ACCEL;
     } else {
-      // March toward the objective.
-      const t = targets[teami];
-      ax = t.x - xi;
-      ay = t.y - yi;
-      const d = Math.hypot(ax, ay);
-      if (d > 0.001) { ax = (ax / d) * SEEK_ACCEL; ay = (ay / d) * SEEK_ACCEL; }
+      // March toward the objective, following the team flow field so the path
+      // routes around water. Near the goal (or unreachable cells) the field
+      // reads zero, so fall back to steering straight at the objective point.
+      flows[teami].sampleDir(xi, yi, flowDir);
+      if (flowDir.x !== 0 || flowDir.y !== 0) {
+        ax = flowDir.x * SEEK_ACCEL;
+        ay = flowDir.y * SEEK_ACCEL;
+      } else {
+        const t = targets[teami];
+        ax = t.x - xi;
+        ay = t.y - yi;
+        const d = Math.hypot(ax, ay);
+        if (d > 0.001) { ax = (ax / d) * SEEK_ACCEL; ay = (ay / d) * SEEK_ACCEL; }
+      }
     }
     ax += sx * SEP_ACCEL;
     ay += sy * SEP_ACCEL;

@@ -32,6 +32,11 @@ export const HEIGHT_DMG = 2.0;          // downhill melee damage bonus scale
 export const WATER_LOOK = 22;           // look-ahead distance for shoreline avoidance
 export const WATER_AVOID = 160;         // steering force away from water ahead
 
+// Flow-field pathfinding. One field per team routes around impassable water
+// toward the team objective; recomputed every few ticks and shared by all units.
+export const FLOW_CELL = 24;            // world units per pathfinding cell
+export const FLOW_UPDATE_TICKS = 8;     // recompute cadence (~4x/sec at 33Hz)
+
 // Combat.
 export const ATTACK_RANGE = 5;          // melee reach (world units)
 export const ATTACK_DPS = 16;           // hp/sec dealt to the engaged target
