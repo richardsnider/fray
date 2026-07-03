@@ -15,7 +15,11 @@ export let elevation = new Float32Array(0); // 0..1
 export let water = new Uint8Array(0);        // 1 = impassable
 export let cover = new Float32Array(0);      // 0..1 brush density
 
-export function generate() {
+// Folded into the value-noise hash so each seed yields a distinct battlefield.
+let seed = 0;
+
+export function generate(s = 0) {
+  seed = s >>> 0;
   cols = Math.ceil(WORLD_W / CELL) + 1;
   rows = Math.ceil(WORLD_H / CELL) + 1;
   const n = cols * rows;
@@ -93,8 +97,8 @@ function smoothstep(e0, e1, x) {
 
 // --- compact hash-based value noise + fbm ----------------------------------
 function hash(x, y) {
-  let n = x * 374761393 + y * 668265263;
-  n = (n ^ (n >> 13)) * 1274126177;
+  let n = (Math.imul(x, 374761393) + Math.imul(y, 668265263) + Math.imul(seed, 2246822519)) | 0;
+  n = Math.imul(n ^ (n >> 13), 1274126177);
   n = n ^ (n >> 16);
   return (n & 0xffff) / 0xffff;
 }

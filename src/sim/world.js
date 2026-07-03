@@ -5,6 +5,7 @@ import * as U from './units.js';
 import * as T from './terrain.js';
 import { SpatialGrid } from './spatialGrid.js';
 import { FlowField } from './flowField.js';
+import { mulberry32 } from './rng.js';
 import {
   MAX_UNITS, WORLD_W, WORLD_H, ARMY_SIZE, SEEK_ACCEL, SEP_RADIUS, SEP_ACCEL, DAMPING,
   ATTACK_RANGE, FLEE_SPEED_MULT,
@@ -42,8 +43,13 @@ let manualTarget0 = null;
 // Live counts for the HUD, refreshed each tick.
 const stats = { team0: 0, team1: 0 };
 
-export function init() {
-  T.generate();
+// Seeded RNG for spawn placement / type rolls; reset in init() so one seed
+// reproduces the whole battle. Decorrelated from the terrain seed via XOR.
+let rng = Math.random;
+
+export function init(seed = 0) {
+  rng = mulberry32((seed ^ 0x9e3779b9) >>> 0);
+  T.generate(seed);
   grid = new SpatialGrid(W, H, SEP_RADIUS);
   // Bow range dwarfs the melee cell, so archers target off a coarser grid whose
   // cell == range: a 3x3 walk then guarantees every enemy in range is visited.
@@ -54,6 +60,7 @@ export function init() {
     flows[t].setBlocked(blocked);
   }
   flowTick = 0;
+  manualTarget0 = null;
   U.reset();
   spawnArmies();
 }
@@ -85,7 +92,7 @@ function spawnArmy(x0, x1, team) {
 
 // Draw a unit type from the army composition weights.
 function pickType() {
-  const r = Math.random();
+  const r = rng();
   let acc = 0;
   for (let t = 0; t < ARMY_MIX.length; t++) {
     acc += ARMY_MIX[t];
@@ -95,7 +102,7 @@ function pickType() {
 }
 
 function rand(a, b) {
-  return a + Math.random() * (b - a);
+  return a + rng() * (b - a);
 }
 
 function updateTargets() {

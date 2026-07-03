@@ -13,11 +13,31 @@
       color: #cfe; text-shadow: 0 1px 2px #000; pointer-events: none;
       white-space: pre;
     }
+    #seedbar {
+      position: fixed; top: 8px; right: 10px;
+      font: 12px/1.4 ui-monospace, Menlo, Consolas, monospace;
+      color: #cfe; display: flex; gap: 6px; align-items: center;
+    }
+    #seedbar input {
+      width: 96px; padding: 3px 6px; border: 1px solid #456; border-radius: 4px;
+      background: rgba(0,0,0,0.5); color: #cfe; font: inherit;
+    }
+    #seedbar button {
+      padding: 3px 8px; border: 1px solid #456; border-radius: 4px;
+      background: rgba(0,0,0,0.5); color: #cfe; font: inherit; cursor: pointer;
+    }
+    #seedbar button:hover { background: rgba(80,110,140,0.4); }
   </style>
 </head>
 <body>
   <canvas id="c"></canvas>
   <div id="hud"></div>
+  <form id="seedbar" autocomplete="off">
+    <label for="seed">seed</label>
+    <input id="seed" name="seed" type="text" />
+    <button id="regen" type="submit">regenerate</button>
+    <button id="rand" type="button">random</button>
+  </form>
   <script type="module" src="./src/main.js"></script>
 </body>
 </html>

@@ -8,13 +8,21 @@ import { Camera } from './render/camera.js';
 import * as world from './sim/world.js';
 import { Input } from './input/input.js';
 import * as U from './sim/units.js';
+import { hashSeed } from './sim/rng.js';
 import { TICK_MS, WORLD_W, WORLD_H } from './config.js';
 
 const canvas = document.getElementById('c');
 const hud = document.getElementById('hud');
+const seedInput = document.getElementById('seed');
+
+// The seed drives terrain + spawns, so a given seed reproduces the whole battle.
+// Take it from ?seed= if present, else start from a random one.
+let seedText = new URLSearchParams(location.search).get('seed');
+if (seedText === null) seedText = randomSeed();
+seedInput.value = seedText;
 
 // Generate the world (incl. terrain grids) before the renderer bakes terrain.
-world.init();
+world.init(hashSeed(seedText));
 
 const renderer = new Renderer(canvas);
 const camera = new Camera(WORLD_W, WORLD_H, renderer.width, renderer.height);
@@ -24,6 +32,27 @@ window.addEventListener('resize', () => {
   renderer.resize();
   camera.setViewport(renderer.width, renderer.height);
 });
+
+// Rebuild the battle from the seed box: reseed the sim and re-bake the terrain.
+// Stash the seed in the URL so a reload (or shared link) reproduces the map.
+function regenerate(text) {
+  seedText = text.trim() || randomSeed();
+  seedInput.value = seedText;
+  world.init(hashSeed(seedText));
+  renderer.buildTerrain();
+  history.replaceState(null, '', `?seed=${encodeURIComponent(seedText)}`);
+}
+
+function randomSeed() {
+  return Math.floor(Math.random() * 1e9).toString(36);
+}
+
+document.getElementById('seedbar').addEventListener('submit', (e) => {
+  e.preventDefault();
+  regenerate(seedInput.value);
+  seedInput.blur();
+});
+document.getElementById('rand').addEventListener('click', () => regenerate(randomSeed()));
 
 let last = performance.now();
 let acc = 0;

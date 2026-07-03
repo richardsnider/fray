@@ -49,7 +49,13 @@ export class Input {
       cam.zoomAt(factor, p.x, p.y);
     }, { passive: false });
 
-    window.addEventListener('keydown', (e) => this.keys.add(e.key.toLowerCase()));
+    // Ignore keys while typing in a form field (e.g. the seed box) so WASD text
+    // doesn't pan the camera.
+    const typing = (e) => {
+      const t = e.target;
+      return t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable);
+    };
+    window.addEventListener('keydown', (e) => { if (!typing(e)) this.keys.add(e.key.toLowerCase()); });
     window.addEventListener('keyup', (e) => this.keys.delete(e.key.toLowerCase()));
   }
 
