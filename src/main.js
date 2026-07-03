@@ -42,8 +42,12 @@ function frame(now) {
   renderer.render(acc / TICK_MS);
 
   fps += (1000 / Math.max(dt, 1) - fps) * 0.1;
+  const s = world.getStats();
   hud.textContent =
-    `units ${U.count}\nfps   ${fps.toFixed(0)}\nsim   ${simMs.toFixed(1)}ms\nclick: move your army`;
+    `silver ${s.team0}   red ${s.team1}\n` +
+    `fps    ${fps.toFixed(0)}\n` +
+    `sim    ${simMs.toFixed(1)}ms\n` +
+    `click: move your (silver) army`;
 
   requestAnimationFrame(frame);
 }

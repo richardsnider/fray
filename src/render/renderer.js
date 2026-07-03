@@ -55,12 +55,19 @@ export class Renderer {
     const w = this.width;
     const h = this.height;
     const count = U.count;
+    const ROUTING = U.STATE.ROUTING;
     for (let i = 0; i < count; i++) {
       // Interpolate between previous and current sim positions for smoothness.
       const ix = (U.px[i] + (U.x[i] - U.px[i]) * alpha) | 0;
       const iy = (U.py[i] + (U.y[i] - U.py[i]) * alpha) | 0;
       const c = TEAM_COLORS[U.team[i]];
-      const r = c[0], g = c[1], b = c[2];
+      let r = c[0], g = c[1], b = c[2];
+      if (U.state[i] === ROUTING) {
+        // Broken units read as dim, desaturated dots so routs are visible.
+        r = (r * 0.45) | 0;
+        g = (g * 0.45) | 0;
+        b = (b * 0.45) | 0;
+      }
       // 2x2 block so single soldiers are visible at a glance.
       for (let oy = 0; oy < 2; oy++) {
         const yy = iy + oy;

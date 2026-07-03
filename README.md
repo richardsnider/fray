@@ -22,11 +22,15 @@ Any static server works.
   a future WebGL renderer.
 - Uniform spatial-hash grid (`src/sim/spatialGrid.js`) for O(1)-ish neighbor
   queries.
-- Boids-style steering: seek objective + separation (`src/sim/world.js`).
+- Boids-style steering: seek objective + friend-only separation (`src/sim/world.js`).
+- Melee combat, morale, and routing with panic contagion (`src/sim/world.js`).
 - `ImageData` pixel renderer with value-noise terrain (`src/render/renderer.js`).
 
-Two armies (silver vs. red) spawn and march into each other. **Click** to redirect
-your (silver) army. The HUD shows unit count, FPS, and sim time per frame.
+Two armies (silver vs. red) spawn and march into each other. Units in reach trade
+damage; morale drains from being outnumbered, taking hits, and standing near
+fleeing friends. Below a threshold a unit **routs** (dim dots) and runs; if it
+reaches safety and recovers, it re-forms. **Click** to redirect your (silver)
+army. The HUD shows per-team survivors, FPS, and sim time per frame.
 
 ## Architecture
 
@@ -46,7 +50,7 @@ src/
 
 ## Roadmap
 
-- Combat + morale/routing (panic contagion via the spatial grid)
+- ~~Combat + morale/routing (panic contagion via the spatial grid)~~ ✅ done
 - Camera (pan/zoom) so the world can be larger than the screen
 - Terrain effects (elevation on speed/charge, cover vs. archers, water)
 - Flow-field pathfinding for large groups
