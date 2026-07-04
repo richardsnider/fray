@@ -59,7 +59,8 @@ export const create = (canvas, cam, world) => {
   window.addEventListener('keydown', (e) => { !typing(e) && keys.add(e.key.toLowerCase()); });
   window.addEventListener('keyup', (e) => keys.delete(e.key.toLowerCase()));
 
-  // Apply held-key panning; call once per rendered frame.
+  // Apply held-key panning and ease the camera toward its target; call once per
+  // rendered frame. dt is in seconds.
   const update = (dt) => {
     let dx = 0, dy = 0;
     (keys.has('a') || keys.has('arrowleft')) && (dx -= 1);
@@ -68,6 +69,7 @@ export const create = (canvas, cam, world) => {
     (keys.has('s') || keys.has('arrowdown')) && (dy += 1);
     const speed = PAN_KEYS_SPEED * dt;
     (dx || dy) && Camera.panByWorld(cam, dx * speed, dy * speed);
+    Camera.smooth(cam, dt);
   };
 
   return { update };

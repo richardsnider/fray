@@ -11,6 +11,7 @@ export const MAX_UNITS = 20000;         // typed-array capacity (hard ceiling)
 export const WORLD_W = 3200;
 export const WORLD_H = 2000;
 export const MAX_ZOOM = 5;              // CSS px per world unit at full zoom-in (camera scales it by DPR); min zoom is derived so the view can't leave the world
+export const CAM_SMOOTH = 1.1;            // camera ease rate (1/sec): higher = snappier, lower = slower/floatier pan+zoom
 
 // Vertical-slice army sizes. Bump these to stress-test the renderer/grid.
 export const ARMY_SIZE = 2500;
