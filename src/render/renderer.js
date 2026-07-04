@@ -24,6 +24,7 @@ import {
 } from '../config.js';
 
 const TERRAIN_SCALE = 2;   // bake texels per world unit; 2 → crisp at max zoom. One-time cost (~1.5s).
+const TERRAIN_LIFT = 2; // global brightness on the baked palette; 1 = the moody baseline
 const HILLSHADE = 7;       // strength of slope shading
 const LX = -0.7, LY = -0.7; // light direction (from top-left)
 
@@ -214,9 +215,9 @@ export const buildTerrain = (r) => {
 
       const i = (py * tw + px) * 4;
       const dth = (BAYER4[(py & 3) * 4 + (px & 3)] / 16 - 0.5) * QUANT;
-      data[i] = qd(r0 + dth);
-      data[i + 1] = qd(g0 + dth);
-      data[i + 2] = qd(b0 + dth);
+      data[i] = qd(r0 * TERRAIN_LIFT + dth);
+      data[i + 1] = qd(g0 * TERRAIN_LIFT + dth);
+      data[i + 2] = qd(b0 * TERRAIN_LIFT + dth);
       data[i + 3] = 255;
     }
   }
