@@ -60,6 +60,9 @@ const TYPE_SCALE = [1.4, 0.9, 1.2];        // base dot size multiplier (the knig
 
 const OUTLINE_STYLE = 'rgb(10,8,10)';      // near-black rim baked into sprites so units pop off any ground
 const ARROW_STYLE = 'rgb(216,204,170)';    // pale ash shafts read against the dark ground
+const SELECT_RING = 'rgba(140,255,180,0.9)';   // ring under each selected unit
+const SELECT_BOX_FILL = 'rgba(140,255,180,0.10)';
+const SELECT_BOX_LINE = 'rgba(150,255,185,0.75)';
 const BLOOD_A = 'rgb(86,18,14)';
 const BLOOD_B = 'rgb(58,12,10)';
 
@@ -197,6 +200,7 @@ export const create = (canvas) => {
     terrain: null, tctx: null, vignette: null,
     bins: createBins(), binN: new Int32Array(BIN_COUNT),
     sprites: new Array(BIN_COUNT), spriteZoom: 0,
+    selMark: new Int16Array(MAX_UNITS * 2), // screen (x,y) of visible selected units
   };
   buildTerrain(r);
   resize(r);
@@ -379,7 +383,7 @@ const drawArrows = (r, alpha, cam) => {
   }
 };
 
-export const render = (r, alpha, cam) => {
+export const render = (r, alpha, cam, selBox = null) => {
   const ctx = r.ctx;
   const w = r.width;
   const h = r.height;
@@ -404,8 +408,9 @@ export const render = (r, alpha, cam) => {
   // One pass bins each visible unit's screen position by (team, type, routing,
   // facing); each bin then stamps its pre-baked sprite. Facing only varies for
   // knights, quantized from velocity to right/left/down/up.
-  const { bins, binN } = r;
+  const { bins, binN, selMark } = r;
   binN.fill(0);
+  let selN = 0;
   for (let i = 0; i < count; i++) {
     const wx = U.px[i] + (U.x[i] - U.px[i]) * alpha;
     const sx = (wx - camX) * zoom;
@@ -413,6 +418,7 @@ export const render = (r, alpha, cam) => {
     const wy = U.py[i] + (U.y[i] - U.py[i]) * alpha;
     const sy = (wy - camY) * zoom;
     if (sy < 0 || sy >= h) continue;
+    if (U.selected[i]) { selMark[selN] = sx; selMark[selN + 1] = sy; selN += 2; }
     const type = U.type[i];
     let f = 0;
     type === KNIGHT && (
@@ -428,6 +434,20 @@ export const render = (r, alpha, cam) => {
     binN[b] = n + 2;
   }
 
+  // Selection rings, batched into one stroked path so they sit under the sprites.
+  if (selN) {
+    const rad = Math.max(2, zoom * 0.9);
+    ctx.beginPath();
+    for (let k = 0; k < selN; k += 2) {
+      const x = selMark[k], y = selMark[k + 1];
+      ctx.moveTo(x + rad, y);
+      ctx.arc(x, y, rad, 0, Math.PI * 2);
+    }
+    ctx.lineWidth = Math.max(1, zoom * 0.18);
+    ctx.strokeStyle = SELECT_RING;
+    ctx.stroke();
+  }
+
   for (let b = 0; b < BIN_COUNT; b++) {
     const n = binN[b];
     if (n === 0) continue;
@@ -436,7 +456,16 @@ export const render = (r, alpha, cam) => {
     for (let k = 0; k < n; k += 2) ctx.drawImage(c, bin[k] - ax, bin[k + 1] - ay);
   }
 
-  // --- overlays: volleys in the air, then the vignette ------------------------
+  // --- overlays: volleys in the air, the selection box, then the vignette ------
   drawArrows(r, alpha, cam);
+  if (selBox) {
+    const bx = Math.min(selBox.x0, selBox.x1), by = Math.min(selBox.y0, selBox.y1);
+    const bw = Math.abs(selBox.x1 - selBox.x0), bh = Math.abs(selBox.y1 - selBox.y0);
+    ctx.fillStyle = SELECT_BOX_FILL;
+    ctx.fillRect(bx, by, bw, bh);
+    ctx.lineWidth = 1;
+    ctx.strokeStyle = SELECT_BOX_LINE;
+    ctx.strokeRect(bx + 0.5, by + 0.5, bw, bh);
+  }
   ctx.drawImage(r.vignette, 0, 0);
 };

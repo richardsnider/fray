@@ -39,9 +39,13 @@ const flowDir = { x: 0, y: 0 }; // reused scratch to avoid per-unit allocation
 const dmg = new Float32Array(MAX_UNITS);
 
 // Per-team objective point. In the slice each team seeks the enemy's center of
-// mass, so the armies clash on their own. A player click overrides team 0's.
+// mass, so the armies clash on their own.
 const targets = [{ x: 0, y: 0 }, { x: 0, y: 0 }];
-let manualTarget0 = null;
+
+// Player control: a subset of team-0 units is `selected` (flag on the unit), and
+// they march to `playerTarget` instead of the team objective. Everything else
+// keeps advancing on the enemy on its own.
+let playerTarget = null;
 
 // Live counts for the HUD, refreshed each tick.
 const stats = { team0: 0, team1: 0 };
@@ -61,16 +65,47 @@ export const init = (seed = 0) => {
     Flow.setBlocked(flows[t], blocked);
   }
   tick = 0;
-  manualTarget0 = null;
+  playerTarget = null;
   deaths.n = 0;
   U.reset();
   spawnArmies();
 };
 
-// Called by the input layer, which receives `world` via dependency injection —
-// so static analysis can't see the edge (hence the ignore).
+// Player command + selection API. Called by the input layer, which receives
+// `world` via dependency injection — so static analysis can't see the edges.
+
+// Select every live team-0 unit inside the world-space rectangle, replacing the
+// previous selection. An empty box (a bare click) clears the selection.
 // fallow-ignore-next-line unused-export
-export const setManualTarget = (x, y) => { manualTarget0 = { x, y }; };
+export const selectInRect = (x0, y0, x1, y1) => {
+  const xlo = Math.min(x0, x1), xhi = Math.max(x0, x1);
+  const ylo = Math.min(y0, y1), yhi = Math.max(y0, y1);
+  for (let i = 0; i < U.count; i++) {
+    const hit = U.team[i] === 0 && U.state[i] !== DEAD &&
+      U.x[i] >= xlo && U.x[i] <= xhi && U.y[i] >= ylo && U.y[i] <= yhi;
+    U.selected[i] = hit ? 1 : 0;
+  }
+  // A fresh selection has no standing order — hold default AI until commanded.
+  playerTarget = null;
+};
+
+// Order the current selection to a world point (sets their march direction).
+// fallow-ignore-next-line unused-export
+export const commandSelected = (x, y) => { playerTarget = { x, y }; };
+
+// Count selected live units by type for the HUD. Recomputed on demand so it
+// stays honest as selected units die. Returned object is reused.
+const selCounts = { knight: 0, archer: 0, pike: 0, total: 0 };
+export const getSelectionCounts = () => {
+  selCounts.knight = selCounts.archer = selCounts.pike = selCounts.total = 0;
+  for (let i = 0; i < U.count; i++) {
+    if (!U.selected[i] || U.state[i] === DEAD) continue;
+    selCounts.total++;
+    const t = U.type[i];
+    t === KNIGHT ? selCounts.knight++ : t === PIKE ? selCounts.pike++ : selCounts.archer++;
+  }
+  return selCounts;
+};
 
 export const getStats = () => stats;
 
@@ -142,7 +177,6 @@ const updateTargets = () => {
   }
   n1 && (targets[0].x = x1 / n1, targets[0].y = y1 / n1);
   n0 && (targets[1].x = x0 / n0, targets[1].y = y0 / n0);
-  manualTarget0 && (targets[0].x = manualTarget0.x, targets[0].y = manualTarget0.y);
   stats.team0 = a0;
   stats.team1 = a1;
 };
@@ -272,6 +306,13 @@ export const step = (dt) => {
       const d = mag(ax, ay) || 1;
       ax = (ax / d) * SEEK_ACCEL;
       ay = (ay / d) * SEEK_ACCEL;
+    } else if (playerTarget && U.selected[i]) {
+      // Player-controlled: selected units steer straight at the commanded point,
+      // ignoring the team objective. Water avoidance below still keeps them dry.
+      ax = playerTarget.x - xi;
+      ay = playerTarget.y - yi;
+      const d = mag(ax, ay);
+      d > 0.001 ? (ax = (ax / d) * SEEK_ACCEL, ay = (ay / d) * SEEK_ACCEL) : (ax = 0, ay = 0);
     } else {
       // March toward the objective, following the team flow field so the path
       // routes around water. Near the goal (or unreachable cells) the field

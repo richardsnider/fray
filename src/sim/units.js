@@ -16,6 +16,7 @@ export const morale = new Float32Array(MAX_UNITS);
 export const team = new Uint8Array(MAX_UNITS);
 export const type = new Uint8Array(MAX_UNITS); // UnitType: 0 knight, 1 archer, 2 pike
 export const state = new Uint8Array(MAX_UNITS);
+export const selected = new Uint8Array(MAX_UNITS); // 1 if the player has this unit selected
 export const cooldown = new Float32Array(MAX_UNITS); // type timer: archer reload / cavalry charge recovery
 
 export const STATE = { ACTIVE: 0, ROUTING: 1, DEAD: 2 };
@@ -33,6 +34,7 @@ export const spawn = (sx, sy, t, ut) => {
   team[i] = t;
   type[i] = ut;
   state[i] = STATE.ACTIVE;
+  selected[i] = 0;
   cooldown[i] = 0;
   return i;
 };
@@ -46,6 +48,7 @@ const copyUnit = (dst, src) => {
   vx[dst] = vx[src]; vy[dst] = vy[src];
   hp[dst] = hp[src]; morale[dst] = morale[src];
   team[dst] = team[src]; type[dst] = type[src]; state[dst] = state[src];
+  selected[dst] = selected[src];
   cooldown[dst] = cooldown[src];
 };
 

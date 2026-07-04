@@ -69,15 +69,17 @@ const frame = (now) => {
   }
   simMs = performance.now() - t0;
 
-  Renderer.render(renderer, acc / TICK_MS, camera);
+  Renderer.render(renderer, acc / TICK_MS, camera, input.getSelectionBox());
 
   fps += (1000 / Math.max(dt, 1) - fps) * 0.1;
   const s = world.getStats();
+  const sel = world.getSelectionCounts();
   hud.textContent =
     `silver ${s.team0}   red ${s.team1}\n` +
     `fps    ${fps.toFixed(0)}   zoom ${camera.zoom.toFixed(2)}\n` +
     `sim    ${simMs.toFixed(1)}ms\n` +
-    `left-click: order army   right-drag/WASD: pan   wheel: zoom`;
+    `selected ${sel.total}   inf ${sel.pike}  arch ${sel.archer}  cav ${sel.knight}\n` +
+    `left-drag: select   left-click: move   right-drag/WASD: pan   wheel: zoom`;
 
   requestAnimationFrame(frame);
 };

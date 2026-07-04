@@ -1,19 +1,23 @@
 // Player command + camera control layer.
-//   left click        → order your (team 0) army to a world point
+//   left-drag          → selection box: pick your (team 0) units inside it
+//   left-click         → order the current selection to a world point
 //   right-drag / MMB   → pan the camera
 //   wheel              → zoom toward the cursor
 //   W/A/S/D or arrows  → pan the camera
 //
-// createInput() wires the DOM listeners and returns { update } to call per frame.
+// createInput() wires the DOM listeners and returns { update, getSelectionBox }.
 
 import * as Camera from '../render/camera.js';
 
 const PAN_KEYS_SPEED = 900; // world units/sec at zoom 1
+const CLICK_SLOP = 6;       // device px of travel below which a left-drag is a click, not a box
 
 export const create = (canvas, cam, world) => {
   const keys = new Set();
-  let dragging = false;
+  let dragging = false;             // right/middle pan drag
   let lastX = 0, lastY = 0;
+  let selecting = false;            // left-button selection drag in progress
+  let sx0 = 0, sy0 = 0, sx1 = 0, sy1 = 0; // selection box corners (device px)
 
   // Positions in canvas backing-store px, not CSS px — the camera's screen
   // space is the DPR-scaled canvas resolution.
@@ -27,21 +31,46 @@ export const create = (canvas, cam, world) => {
 
   canvas.addEventListener('mousedown', (e) => {
     const p = localPos(e);
-    // Left click: command in world coords. Middle/right: start a pan drag.
-    e.button === 0
-      ? world.setManualTarget(Camera.screenToWorldX(cam, p.x), Camera.screenToWorldY(cam, p.y))
-      : (e.button === 1 || e.button === 2) && (dragging = true, lastX = p.x, lastY = p.y);
+    // Left: begin a selection box. Middle/right: begin a pan drag.
+    if (e.button === 0) {
+      selecting = true;
+      sx0 = sx1 = p.x;
+      sy0 = sy1 = p.y;
+    } else if (e.button === 1 || e.button === 2) {
+      dragging = true;
+      lastX = p.x;
+      lastY = p.y;
+    }
   });
 
   window.addEventListener('mousemove', (e) => {
-    if (!dragging) return;
+    if (!dragging && !selecting) return;
     const p = localPos(e);
-    Camera.panByScreen(cam, p.x - lastX, p.y - lastY);
-    lastX = p.x;
-    lastY = p.y;
+    if (dragging) {
+      Camera.panByScreen(cam, p.x - lastX, p.y - lastY);
+      lastX = p.x;
+      lastY = p.y;
+    }
+    if (selecting) {
+      sx1 = p.x;
+      sy1 = p.y;
+    }
   });
 
-  window.addEventListener('mouseup', () => { dragging = false; });
+  window.addEventListener('mouseup', (e) => {
+    (e.button === 1 || e.button === 2) && (dragging = false);
+    if (e.button !== 0 || !selecting) return;
+    selecting = false;
+    // A near-stationary press is a click → move order; a real drag is a box.
+    if (Math.abs(sx1 - sx0) + Math.abs(sy1 - sy0) < CLICK_SLOP) {
+      world.commandSelected(Camera.screenToWorldX(cam, sx1), Camera.screenToWorldY(cam, sy1));
+    } else {
+      world.selectInRect(
+        Camera.screenToWorldX(cam, sx0), Camera.screenToWorldY(cam, sy0),
+        Camera.screenToWorldX(cam, sx1), Camera.screenToWorldY(cam, sy1),
+      );
+    }
+  });
 
   canvas.addEventListener('wheel', (e) => {
     e.preventDefault();
@@ -72,5 +101,10 @@ export const create = (canvas, cam, world) => {
     Camera.smooth(cam, dt);
   };
 
-  return { update };
+  // The in-progress selection rectangle (device px) for the renderer to draw,
+  // or null when not dragging one.
+  const getSelectionBox = () =>
+    selecting ? { x0: sx0, y0: sy0, x1: sx1, y1: sy1 } : null;
+
+  return { update, getSelectionBox };
 };
