@@ -61,13 +61,18 @@ export const DMG_MULT = [
   /* PIKE   attacks */         [   1.7,  0.85,  1.0  ],
 ];
 
-// Longbows: hitscan. A ready archer picks the nearest enemy in range each reload
-// and applies one arrow's damage, reduced by the target's armor, RPS multiplier,
-// and brush cover (the cover-vs-archers mechanic).
+// Longbows: massed area fire (see sim/archery.js). A ready archer volleys at
+// the densest enemy cell of the aim grid within range — the beaten zone — and
+// the arrows land ARROW_FLIGHT seconds later on whoever is standing there,
+// friend or foe, damage split across the cell's occupants and reduced by armor,
+// the RPS multiplier, and brush cover (the cover-vs-archers mechanic).
 export const ARCHER_RANGE = 110;        // bow reach (world units)
-export const ARCHER_RELOAD = 1.4;       // seconds between shots
-export const ARCHER_SHOT_DMG = 30;      // base damage per arrow
+export const ARCHER_RELOAD = 1.4;       // seconds between volleys (keep > ARROW_FLIGHT)
+export const ARCHER_SHOT_DMG = 30;      // base damage per volley
 export const ARROW_COVER = 0.7;         // max fractional arrow reduction in dense brush
+export const AIM_CELL = 32;             // beaten-zone cell size (world units)
+export const ARROW_FLIGHT = 0.8;        // arrow flight time (seconds) before impact
+export const ARCHER_RESCAN = 0.25;      // retry delay when no enemy is in bow range
 
 // Cavalry charge: a transient impact bonus when a fast-moving horse contacts an
 // enemy head-on after a straight run, then a recovery cooldown. Braced pikes

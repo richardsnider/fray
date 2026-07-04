@@ -5,6 +5,7 @@ import * as U from './units.js';
 import * as T from './terrain.js';
 import * as Grid from './spatialGrid.js';
 import * as Flow from './flowField.js';
+import * as Archery from './archery.js';
 import { mulberry32 } from './rng.js';
 import { clamp, clampIndex } from '../util/math.js';
 import { cellCoord } from '../util/grid2d.js';
@@ -16,21 +17,20 @@ import {
   SLOPE_SPEED, COVER_SLOW, HEIGHT_DMG, WATER_LOOK, WATER_AVOID,
   FLOW_CELL, FLOW_UPDATE_TICKS,
   UnitType, ARMY_MIX, TYPE_SPEED, TYPE_MELEE_DPS, TYPE_ARMOR, DMG_MULT,
-  ARCHER_RANGE, ARCHER_RELOAD, ARCHER_SHOT_DMG, ARROW_COVER,
   CHARGE_MIN_SPEED, CHARGE_DMG, CHARGE_MORALE, CHARGE_COOLDOWN,
 } from '../config.js';
 
 const { ACTIVE, ROUTING, DEAD } = U.STATE;
-const { KNIGHT, ARCHER, PIKE } = UnitType;
+const { KNIGHT, PIKE } = UnitType;
 
 const W = WORLD_W;
 const H = WORLD_H;
 let grid = null;        // fine grid (SEP_RADIUS) for separation + melee
-let rangedGrid = null;  // coarse grid (ARCHER_RANGE) for bow targeting
+let archery = null;     // volley aim grid + pending-impact queue (sim/archery.js)
 
 // One flow field per team, routing around water toward that team's objective.
 const flows = [null, null];
-let flowTick = 0;
+let tick = 0;
 const flowDir = { x: 0, y: 0 }; // reused scratch to avoid per-unit allocation
 
 // Incoming damage is accumulated here during the scan and applied after the full
@@ -53,15 +53,13 @@ export const init = (seed = 0) => {
   rng = mulberry32((seed ^ 0x9e3779b9) >>> 0);
   T.generate(seed);
   grid = Grid.create(W, H, SEP_RADIUS);
-  // Bow range dwarfs the melee cell, so archers target off a coarser grid whose
-  // cell == range: a 3x3 walk then guarantees every enemy in range is visited.
-  rangedGrid = Grid.create(W, H, ARCHER_RANGE);
+  archery = Archery.create();
   const blocked = (wx, wy) => T.isWaterAt(wx, wy);
   for (let t = 0; t < flows.length; t++) {
     flows[t] = Flow.create(W, H, FLOW_CELL);
     Flow.setBlocked(flows[t], blocked);
   }
-  flowTick = 0;
+  tick = 0;
   manualTarget0 = null;
   U.reset();
   spawnArmies();
@@ -133,14 +131,13 @@ export const step = (dt) => {
   updateTargets();
 
   // Rebuild each team's flow field toward its objective, a few times a second.
-  flowTick % FLOW_UPDATE_TICKS === 0 && (
+  tick % FLOW_UPDATE_TICKS === 0 && (
     Flow.compute(flows[0], targets[0].x, targets[0].y),
     Flow.compute(flows[1], targets[1].x, targets[1].y)
   );
-  flowTick++;
+  tick++;
 
   Grid.build(grid, count, U.x, U.y);
-  Grid.build(rangedGrid, count, U.x, U.y);
 
   const { cell, cols, rows, heads, next } = grid;
   const scanR2 = SEP_RADIUS * SEP_RADIUS;   // separation / awareness radius
@@ -311,51 +308,11 @@ export const step = (dt) => {
     U.y[i] = clamp(ny, 0, H - 1);
   }
 
-  resolveRanged(count);
+  // Volleys: loose ready archers at their beaten zones, land due arrows into dmg.
+  Archery.step(archery, count, tick, dmg);
+
   resolveDamage(count);
   U.compactDead();
-};
-
-// --- ranged: each ready archer looses one arrow at its nearest enemy ----------
-// Reload cadence rate-limits this scan, so only a fraction of archers search per
-// tick. Damage is cut by the target's armor, the RPS matchup, and — the deferred
-// cover mechanic — how much brush the target is standing in.
-const resolveRanged = (count) => {
-  const { cell, cols, rows, heads, next } = rangedGrid;
-  const rangeR2 = ARCHER_RANGE * ARCHER_RANGE;
-  for (let i = 0; i < count; i++) {
-    if (U.type[i] !== ARCHER || U.state[i] !== ACTIVE || U.cooldown[i] > 0) continue;
-    const xi = U.x[i];
-    const yi = U.y[i];
-    const teami = U.team[i];
-    let best = -1, bestD2 = rangeR2;
-    const cx = cellCoord(xi, cell, cols);
-    const cy = cellCoord(yi, cell, rows);
-    for (let oy = -1; oy <= 1; oy++) {
-      const gy = cy + oy;
-      if (gy < 0 || gy >= rows) continue;
-      for (let ox = -1; ox <= 1; ox++) {
-        const gx = cx + ox;
-        if (gx < 0 || gx >= cols) continue;
-        let j = heads[gy * cols + gx];
-        while (j !== -1) {
-          if (U.team[j] !== teami && U.state[j] !== DEAD) {
-            const dx = xi - U.x[j];
-            const dy = yi - U.y[j];
-            const dd = dx * dx + dy * dy;
-            dd < bestD2 && (bestD2 = dd, best = j);
-          }
-          j = next[j];
-        }
-      }
-    }
-    if (best !== -1) {
-      const tt = U.type[best];
-      const cover = T.cover[T.cellOf(U.x[best], U.y[best])];
-      dmg[best] += ARCHER_SHOT_DMG * DMG_MULT[ARCHER][tt] * (1 - TYPE_ARMOR[tt]) * (1 - cover * ARROW_COVER);
-      U.cooldown[i] = ARCHER_RELOAD;
-    }
-  }
 };
 
 // --- apply accumulated damage, then resolve morale-driven state transitions ---

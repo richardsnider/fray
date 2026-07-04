@@ -28,8 +28,12 @@ The game itself has **zero runtime dependencies**. See package.json for dev scri
   queries.
 - Boids-style steering: seek objective + friend-only separation (`src/sim/world.js`).
 - Three unit types — heavy cavalry, longbow archers, pike/melee — with
-  data-driven stats, a rock-paper-scissors damage table, ranged bow fire, and
-  cavalry charges (`src/config.js`, `src/sim/world.js`).
+  data-driven stats, a rock-paper-scissors damage table, and cavalry charges
+  (`src/config.js`, `src/sim/world.js`).
+- Massed archery as **area fire** (`src/sim/archery.js`): each volley targets
+  the densest enemy cell in bow range (the beaten zone) and lands after a
+  flight delay on whoever is standing there — friend or foe — so units can
+  walk out from under a volley and arrows into a melee cut both ways.
 - Melee combat, morale, and routing with panic contagion (`src/sim/world.js`).
 - Camera over a fixed world larger than the screen (`src/render/camera.js`).
 - Terrain grid (elevation/water/brush) that feeds both the sim and the renderer
@@ -60,6 +64,7 @@ src/
     spatialGrid.js   linked-list uniform grid
     terrain.js       elevation/water/brush grids + sampling
     flowField.js     BFS flow-field pathfinding (one field per army)
+    archery.js       massed volley fire: beaten-zone aiming + arrow-flight queue
     rng.js           seeded PRNG (mulberry32) so a seed reproduces a battle
     world.js         steering, combat, morale, terrain integration
   render/
@@ -170,3 +175,18 @@ order:
   and assault resolution, no breach animation.
 - *Assumptions:* the strategic features are a thin layer **over** the tactical
   sim, not a second game mode; still no economy/production; naval stays out.
+
+### Backlog — unscheduled design notes
+
+- **Bow classes vs. armor tiers.** Split archery into shortbow/longbow classes
+  against armor tiers instead of one RPS row: shortbows threaten only
+  unarmored/padded troops, longbows defeat mail + padding but not late-period
+  full plate (which is near arrow-proof frontally), and horses stay vulnerable
+  regardless — massed volleys break a charge through the mounts, not the
+  riders. Today's `DMG_MULT` row + `TYPE_ARMOR` approximates this; revisit
+  when unit types grow.
+- **Archer fire discipline.** Volley aiming is deliberately dumb (densest
+  enemy cell, friendly fire included). Hold-fire judgement — not volleying a
+  melee your own pikes are winning — belongs to the AI director, not the
+  archers; it's a one-line score tweak in `sim/archery.js` when the director
+  lands.
