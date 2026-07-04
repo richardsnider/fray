@@ -5,7 +5,8 @@
 // reads it (bilinear) to bake the ground.
 
 import { WORLD_W, WORLD_H, TERRAIN_CELL, WATER_LEVEL } from '../config.js';
-import { lerp, clamp01, clampIndex } from '../util/math.js';
+import { lerp, clamp01, smoothstep } from '../util/math.js';
+import { cellIndexOf, sampleBilinear } from '../util/grid2d.js';
 
 export const CELL = TERRAIN_CELL;
 
@@ -48,36 +49,11 @@ export const generate = (s = 0) => {
 };
 
 // --- sampling --------------------------------------------------------------
-export const cellOf = (wx, wy) =>
-  clampIndex((wy / CELL) | 0, rows) * cols + clampIndex((wx / CELL) | 0, cols);
+export const cellOf = (wx, wy) => cellIndexOf(wx, wy, CELL, cols, rows);
 
 export const isWaterAt = (wx, wy) => water[cellOf(wx, wy)] === 1;
-export const elevBilinear = (wx, wy) => bilinear(elevation, wx, wy);
-export const coverBilinear = (wx, wy) => bilinear(cover, wx, wy);
-
-const bilinear = (grid, wx, wy) => {
-  const fx = wx / CELL;
-  const fy = wy / CELL;
-  const fx0 = Math.floor(fx);
-  const fy0 = Math.floor(fy);
-  const tx = fx - fx0;
-  const ty = fy - fy0;
-  const x0 = clampIndex(fx0, cols);
-  const y0 = clampIndex(fy0, rows);
-  const x1 = x0 + 1 < cols ? x0 + 1 : x0;
-  const y1 = y0 + 1 < rows ? y0 + 1 : y0;
-  const a = grid[y0 * cols + x0];
-  const b = grid[y0 * cols + x1];
-  const c = grid[y1 * cols + x0];
-  const d = grid[y1 * cols + x1];
-  return lerp(lerp(a, b, tx), lerp(c, d, tx), ty);
-};
-
-// --- helpers ---------------------------------------------------------------
-const smoothstep = (e0, e1, x) => {
-  const t = clamp01((x - e0) / (e1 - e0));
-  return t * t * (3 - 2 * t);
-};
+export const elevBilinear = (wx, wy) => sampleBilinear(elevation, cols, rows, CELL, wx, wy);
+export const coverBilinear = (wx, wy) => sampleBilinear(cover, cols, rows, CELL, wx, wy);
 
 // --- compact hash-based value noise + fbm ----------------------------------
 const hash = (x, y) => {

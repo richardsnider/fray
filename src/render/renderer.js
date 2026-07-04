@@ -116,7 +116,7 @@ export const buildTerrain = (r) => {
       // Directional hillshade from the local slope, times a fine grass mottle.
       const gx = T.elevBilinear(wx + d, wy) - e;
       const gy = T.elevBilinear(wx, wy + d) - e;
-      const shade = Math.min(Math.max(1 + (gx * LX + gy * LY) * HILLSHADE, 0.6), 1.4)
+      const shade = clamp(1 + (gx * LX + gy * LY) * HILLSHADE, 0.6, 1.4)
         * (1 + (mott - 0.5) * GROUND_MOTTLE);
       r0 *= shade; g0 *= shade; b0 *= shade;
 

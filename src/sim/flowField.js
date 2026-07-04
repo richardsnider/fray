@@ -7,7 +7,7 @@
 //
 // A field is plain data; the functions below read/mutate it as their first arg.
 
-import { lerp, clampIndex } from '../util/math.js';
+import { cellIndexOf, sampleBilinear } from '../util/grid2d.js';
 
 const INF = 1e9;
 
@@ -34,11 +34,7 @@ export const setBlocked = (ff, fn) => {
       blocked[cy * cols + cx] = fn(cx * cell, cy * cell) ? 1 : 0;
 };
 
-const cellIndex = (ff, wx, wy) => {
-  const cx = clampIndex((wx / ff.cell) | 0, ff.cols);
-  const cy = clampIndex((wy / ff.cell) | 0, ff.rows);
-  return cy * ff.cols + cx;
-};
+const cellIndex = (ff, wx, wy) => cellIndexOf(wx, wy, ff.cell, ff.cols, ff.rows);
 
 // Enqueue an unvisited, passable neighbor. Returns the new tail (unchanged if the
 // cell is blocked or already reached at ≤ distance).
@@ -106,20 +102,8 @@ const buildFlow = (ff) => {
 // or zero at the goal / unreachable cells).
 export const sampleDir = (ff, wx, wy, out) => {
   const { cols, rows, cell, dirX, dirY } = ff;
-  const fx = wx / cell;
-  const fy = wy / cell;
-  const fx0 = Math.floor(fx);
-  const fy0 = Math.floor(fy);
-  const tx = fx - fx0;
-  const ty = fy - fy0;
-  const x0 = clampIndex(fx0, cols);
-  const y0 = clampIndex(fy0, rows);
-  const x1 = x0 + 1 < cols ? x0 + 1 : x0;
-  const y1 = y0 + 1 < rows ? y0 + 1 : y0;
-  const i00 = y0 * cols + x0, i01 = y0 * cols + x1;
-  const i10 = y1 * cols + x0, i11 = y1 * cols + x1;
-  const dx = lerp(lerp(dirX[i00], dirX[i01], tx), lerp(dirX[i10], dirX[i11], tx), ty);
-  const dy = lerp(lerp(dirY[i00], dirY[i01], tx), lerp(dirY[i10], dirY[i11], tx), ty);
+  const dx = sampleBilinear(dirX, cols, rows, cell, wx, wy);
+  const dy = sampleBilinear(dirY, cols, rows, cell, wx, wy);
   const m = Math.hypot(dx, dy);
   const k = m > 0.001 ? 1 / m : 0; // zero at the goal / unreachable cells
   out.x = dx * k;

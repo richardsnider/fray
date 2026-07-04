@@ -14,3 +14,9 @@ export const clamp01 = (v) => (v < 0 ? 0 : v > 1 ? 1 : v);
 // Clamp a grid index into [0, len): the canonical "world coord → cell index"
 // guard used by every spatial grid, flow field, and terrain lookup.
 export const clampIndex = (i, len) => (i < 0 ? 0 : i >= len ? len - 1 : i);
+
+// Hermite smoothstep: 0 below e0, 1 above e1, smooth S-curve between.
+export const smoothstep = (e0, e1, x) => {
+  const t = clamp01((x - e0) / (e1 - e0));
+  return t * t * (3 - 2 * t);
+};

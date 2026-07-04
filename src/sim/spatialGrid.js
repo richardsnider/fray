@@ -6,7 +6,7 @@
 // A grid is plain data: { cell, cols, rows, heads, next }. build() mutates it.
 
 import { MAX_UNITS } from '../config.js';
-import { clampIndex } from '../util/math.js';
+import { cellCoord } from '../util/grid2d.js';
 
 export const create = (width, height, cell) => {
   const cols = Math.max(1, Math.ceil(width / cell));
@@ -22,8 +22,8 @@ export const build = (g, count, xs, ys) => {
   const { cell, cols, rows, heads, next } = g;
   heads.fill(-1);
   for (let i = 0; i < count; i++) {
-    const cx = clampIndex((xs[i] / cell) | 0, cols);
-    const cy = clampIndex((ys[i] / cell) | 0, rows);
+    const cx = cellCoord(xs[i], cell, cols);
+    const cy = cellCoord(ys[i], cell, rows);
     const c = cy * cols + cx;
     next[i] = heads[c];
     heads[c] = i;

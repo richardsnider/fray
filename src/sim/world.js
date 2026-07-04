@@ -6,7 +6,8 @@ import * as T from './terrain.js';
 import * as Grid from './spatialGrid.js';
 import * as Flow from './flowField.js';
 import { mulberry32 } from './rng.js';
-import { clampIndex } from '../util/math.js';
+import { clamp, clampIndex } from '../util/math.js';
+import { cellCoord } from '../util/grid2d.js';
 import {
   MAX_UNITS, WORLD_W, WORLD_H, ARMY_SIZE, SEEK_ACCEL, SEP_RADIUS, SEP_ACCEL, DAMPING,
   ATTACK_RANGE, FLEE_SPEED_MULT,
@@ -151,6 +152,11 @@ export const step = (dt) => {
     const teami = U.team[i];
     const statei = U.state[i];
     const typei = U.type[i];
+    // This unit's terrain cell, shared by the combat height bonus and the
+    // movement cover/slope factors below.
+    const tcx = cellCoord(xi, T.CELL, T.cols);
+    const tcy = cellCoord(yi, T.CELL, T.rows);
+    const tcell = tcy * T.cols + tcx;
     U.cooldown[i] > 0 && (U.cooldown[i] -= dt); // archer reload / charge recovery
 
     // --- neighbor scan: separation (friends), plus enemy/friend awareness -----
@@ -161,8 +167,8 @@ export const step = (dt) => {
     let ceIdx = -1;         // closest enemy
     let ceD2 = Infinity;
 
-    const cx = clampIndex((xi / cell) | 0, cols);
-    const cy = clampIndex((yi / cell) | 0, rows);
+    const cx = cellCoord(xi, cell, cols);
+    const cy = cellCoord(yi, cell, rows);
     for (let oy = -1; oy <= 1; oy++) {
       const gy = cy + oy;
       if (gy < 0 || gy >= rows) continue;
@@ -200,9 +206,8 @@ export const step = (dt) => {
     if (statei === ACTIVE && ceIdx !== -1 && ceD2 <= attackR2) {
       const tt = U.type[ceIdx];
       // Attacking downhill (higher ground than the target) hits harder.
-      const dh = T.elevation[T.cellOf(xi, yi)] - T.elevation[T.cellOf(U.x[ceIdx], U.y[ceIdx])];
-      const bonusRaw = 1 + dh * HEIGHT_DMG;
-      const bonus = bonusRaw < 0.5 ? 0.5 : bonusRaw > 1.6 ? 1.6 : bonusRaw;
+      const dh = T.elevation[tcell] - T.elevation[T.cellOf(U.x[ceIdx], U.y[ceIdx])];
+      const bonus = clamp(1 + dh * HEIGHT_DMG, 0.5, 1.6);
       // Per-type dps, the rock-paper-scissors matchup, and the target's armor.
       let hit = TYPE_MELEE_DPS[typei] * dt * bonus * DMG_MULT[typei][tt] * (1 - TYPE_ARMOR[tt]);
       // Cavalry charge: a ready knight moving fast into contact delivers a burst
@@ -283,16 +288,14 @@ export const step = (dt) => {
     U.vy[i] = nvy;
 
     // Terrain speed factor: brush slows; uphill slows, downhill speeds up.
-    let tf = 1 - T.cover[T.cellOf(xi, yi)] * COVER_SLOW;
+    let tf = 1 - T.cover[tcell] * COVER_SLOW;
     if (sp > 0.001) {
-      const tcx = clampIndex((xi / T.CELL) | 0, T.cols);
-      const tcy = clampIndex((yi / T.CELL) | 0, T.rows);
       const gx = T.elevation[tcy * T.cols + clampIndex(tcx + 1, T.cols)] - T.elevation[tcy * T.cols + clampIndex(tcx - 1, T.cols)];
       const gy = T.elevation[clampIndex(tcy + 1, T.rows) * T.cols + tcx] - T.elevation[clampIndex(tcy - 1, T.rows) * T.cols + tcx];
       const slopeAlong = (gx * nvx + gy * nvy) / sp; // >0 = uphill
       tf -= slopeAlong * SLOPE_SPEED;
     }
-    tf = tf < 0.35 ? 0.35 : tf > 1.35 ? 1.35 : tf;
+    tf = clamp(tf, 0.35, 1.35);
 
     let nx = xi + nvx * tf * dt;
     let ny = yi + nvy * tf * dt;
@@ -304,10 +307,8 @@ export const step = (dt) => {
         : (nx = xi, ny = yi, U.vx[i] = 0, U.vy[i] = 0)
     );
 
-    nx = nx < 0 ? 0 : nx > W - 1 ? W - 1 : nx;
-    ny = ny < 0 ? 0 : ny > H - 1 ? H - 1 : ny;
-    U.x[i] = nx;
-    U.y[i] = ny;
+    U.x[i] = clamp(nx, 0, W - 1);
+    U.y[i] = clamp(ny, 0, H - 1);
   }
 
   resolveRanged(count);
@@ -328,8 +329,8 @@ const resolveRanged = (count) => {
     const yi = U.y[i];
     const teami = U.team[i];
     let best = -1, bestD2 = rangeR2;
-    const cx = clampIndex((xi / cell) | 0, cols);
-    const cy = clampIndex((yi / cell) | 0, rows);
+    const cx = cellCoord(xi, cell, cols);
+    const cy = cellCoord(yi, cell, rows);
     for (let oy = -1; oy <= 1; oy++) {
       const gy = cy + oy;
       if (gy < 0 || gy >= rows) continue;
@@ -362,7 +363,7 @@ const resolveDamage = (count) => {
   for (let i = 0; i < count; i++) {
     const d = dmg[i];
     d > 0 && (U.hp[i] -= d, U.morale[i] -= d * HIT_FEAR, dmg[i] = 0);
-    const m = U.morale[i] > MORALE_MAX ? MORALE_MAX : U.morale[i] < 0 ? 0 : U.morale[i];
+    const m = clamp(U.morale[i], 0, MORALE_MAX);
     U.morale[i] = m;
 
     U.hp[i] <= 0
