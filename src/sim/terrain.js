@@ -101,6 +101,11 @@ const valueNoise = (x, y) => {
   return lerp(lerp(a, b, u), lerp(c, d, u), v);
 };
 
+// Seeded single-octave value noise at a world point (0..1), for renderer-only
+// visual detail (ground mottling, forest canopy). Does NOT affect the sim, which
+// reads the coarse elevation/water/cover grids — so it's free to be high-frequency.
+export const noiseAt = (wx, wy) => valueNoise(wx, wy);
+
 const fbm = (x, y) => {
   let sum = 0, amp = 0.5, freq = 1;
   for (let o = 0; o < 4; o++) {

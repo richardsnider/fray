@@ -13,9 +13,17 @@ import * as T from '../sim/terrain.js';
 import { viewWorldW, viewWorldH } from './camera.js';
 import { TEAM_COLORS, UNIT_TYPE_COUNT, WORLD_W, WORLD_H, WATER_LEVEL } from '../config.js';
 
-const TERRAIN_SCALE = 0.5; // bake terrain at half world-res; low-freq, upscales fine
+const TERRAIN_SCALE = 0.75; // bake resolution; higher = crisper (esp. zoomed). One-time cost.
 const HILLSHADE = 7;       // strength of slope shading
 const LX = -0.7, LY = -0.7; // light direction (from top-left)
+
+// Procedural ground/forest detail baked into the terrain (renderer-only, seeded).
+// Free at runtime — it's part of the one-time bake, not the per-frame blit.
+const GROUND_FREQ = 0.06;   // world-space frequency of grass/dirt mottling
+const GROUND_MOTTLE = 0.12; // ± brightness from fine mottling
+const DIRT_PATCH = 0.16;    // how much mottling shoves the grass↔dirt mix around
+const CANOPY_FREQ = 0.05;   // forest clump size
+const SHALLOW = 0.28;       // depth band treated as lit shallows near shore
 const ROUTING = U.STATE.ROUTING;
 
 // Per-type look, kept subtle so the team hue still dominates. Each type nudges
@@ -28,6 +36,7 @@ const TYPE_BRIGHT = [1.12, 0.82, 0.95];    // brightness multiplier
 const TYPE_SCALE = [1.8, 0.9, 1.2];        // dot size multiplier
 
 const lerp = (a, b, t) => a + (b - a) * t;
+const clamp01 = (v) => (v < 0 ? 0 : v > 1 ? 1 : v);
 const clamp255 = (v) => (v < 0 ? 0 : v > 255 ? 255 : v | 0);
 
 // Fill styles: [team][type][active|routing]. Routing dots dim to 45% so broken
@@ -84,32 +93,54 @@ export const buildTerrain = (r) => {
       const i = (py * tw + px) * 4;
 
       if (e < WATER_LEVEL) {
-        // Water: deeper (lower) reads darker blue.
+        // Water: deep→shallow gradient, with a lit shallows band near the shore
+        // so coastlines read as beaches rather than a hard edge.
         const depth = (WATER_LEVEL - e) / WATER_LEVEL; // 0..1
-        data[i] = lerp(64, 26, depth);
-        data[i + 1] = lerp(108, 58, depth);
-        data[i + 2] = lerp(150, 120, depth);
+        const shallow = clamp01(1 - depth / SHALLOW);  // 1 at shore → 0 deep
+        data[i] = lerp(lerp(64, 26, depth), 120, shallow * 0.5);
+        data[i + 1] = lerp(lerp(108, 58, depth), 160, shallow * 0.45);
+        data[i + 2] = lerp(lerp(150, 120, depth), 165, shallow * 0.3);
         data[i + 3] = 255;
         continue;
       }
 
-      // Ground tinted by height: low = grass green, high = dry brown.
-      const t = (e - WATER_LEVEL) / (1 - WATER_LEVEL);
+      // Fine mottling: one seeded noise sample reused for brightness + dirt patches.
+      const mott = T.noiseAt(wx * GROUND_FREQ, wy * GROUND_FREQ); // 0..1
+
+      // Ground tinted by height, nudged by mottling so grass/dirt vary patchily
+      // instead of a smooth gradient (low = grass green, high = dry brown).
+      const t = clamp01((e - WATER_LEVEL) / (1 - WATER_LEVEL) + (mott - 0.5) * DIRT_PATCH);
       let r0 = lerp(86, 132, t);
       let g0 = lerp(122, 108, t);
       let b0 = lerp(58, 74, t);
 
-      // Directional hillshade from the local slope.
+      // Directional hillshade from the local slope, times a fine grass mottle.
       const gx = T.elevBilinear(wx + d, wy) - e;
       const gy = T.elevBilinear(wx, wy + d) - e;
-      const shade = Math.min(Math.max(1 + (gx * LX + gy * LY) * HILLSHADE, 0.6), 1.4);
+      const shade = Math.min(Math.max(1 + (gx * LX + gy * LY) * HILLSHADE, 0.6), 1.4)
+        * (1 + (mott - 0.5) * GROUND_MOTTLE);
       r0 *= shade; g0 *= shade; b0 *= shade;
 
-      // Brush overlay: blend toward a dark, muted green (k=0 leaves color as-is).
-      const k = T.coverBilinear(wx, wy) * 0.7;
-      r0 = lerp(r0, 38, k);
-      g0 = lerp(g0, 66, k);
-      b0 = lerp(b0, 40, k);
+      // Forest overlay: a textured two-tone canopy (shadowed trunks → lit leaves)
+      // whose edge is dithered by the canopy noise, so brush reads as a stippled
+      // tree-line instead of a soft dark blob.
+      const cov = T.coverBilinear(wx, wy);
+      if (cov > 0.002) {
+        const clump = T.noiseAt(wx * CANOPY_FREQ, wy * CANOPY_FREQ);              // coarse clumps
+        const leaf = T.noiseAt(wx * CANOPY_FREQ * 3.7 + 19, wy * CANOPY_FREQ * 3.7 + 7); // fine stipple
+        const canopy = clump * 0.6 + leaf * 0.4;
+        // Distinctly dark, saturated forest green so it reads clearly against
+        // grass; the two tones give leaf texture without lifting the mean toward
+        // grass brightness.
+        const fr = lerp(20, 50, canopy);
+        const fg = lerp(40, 86, canopy);
+        const fb = lerp(24, 40, canopy);
+        // Crisp onset + canopy-dithered edge → a stippled tree-line, not a blob.
+        const k = clamp01(cov * 1.7 - 0.15 - (1 - canopy) * 0.4) * 0.96;
+        r0 = lerp(r0, fr, k);
+        g0 = lerp(g0, fg, k);
+        b0 = lerp(b0, fb, k);
+      }
 
       data[i] = r0; data[i + 1] = g0; data[i + 2] = b0; data[i + 3] = 255;
     }
