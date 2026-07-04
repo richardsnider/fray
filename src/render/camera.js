@@ -56,8 +56,11 @@ export const zoomAt = (cam, factor, sx, sy) => {
 
 const clampZoom = (cam) => {
   // Min zoom = enough that the view never exceeds the world in either axis.
+  // Zoom is in device px per world unit (the canvas backing store is
+  // DPR-scaled), so the CSS-tuned MAX_ZOOM cap scales with display density.
   const minZoom = Math.max(cam.viewW / cam.worldW, cam.viewH / cam.worldH);
-  cam.zoom = Math.min(Math.max(cam.zoom, minZoom), MAX_ZOOM);
+  const maxZoom = MAX_ZOOM * (window.devicePixelRatio || 1);
+  cam.zoom = Math.min(Math.max(cam.zoom, minZoom), maxZoom);
 };
 
 const clamp = (cam) => {

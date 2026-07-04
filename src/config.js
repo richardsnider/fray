@@ -10,7 +10,7 @@ export const MAX_UNITS = 20000;         // typed-array capacity (hard ceiling)
 // The canvas is just a viewport onto it (see render/camera.js).
 export const WORLD_W = 3200;
 export const WORLD_H = 2000;
-export const MAX_ZOOM = 5;              // min zoom is derived so the view can't leave the world
+export const MAX_ZOOM = 5;              // CSS px per world unit at full zoom-in (camera scales it by DPR); min zoom is derived so the view can't leave the world
 
 // Vertical-slice army sizes. Bump these to stress-test the renderer/grid.
 export const ARMY_SIZE = 2500;

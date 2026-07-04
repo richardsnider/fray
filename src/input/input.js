@@ -15,9 +15,12 @@ export const create = (canvas, cam, world) => {
   let dragging = false;
   let lastX = 0, lastY = 0;
 
+  // Positions in canvas backing-store px, not CSS px — the camera's screen
+  // space is the DPR-scaled canvas resolution.
   const localPos = (e) => {
     const rect = canvas.getBoundingClientRect();
-    return { x: e.clientX - rect.left, y: e.clientY - rect.top };
+    const s = canvas.width / rect.width;
+    return { x: (e.clientX - rect.left) * s, y: (e.clientY - rect.top) * s };
   };
 
   canvas.addEventListener('contextmenu', (e) => e.preventDefault());

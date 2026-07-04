@@ -28,7 +28,8 @@ import {
 const { ARCHER } = UnitType;
 const ACTIVE = U.STATE.ACTIVE;
 
-const FLIGHT_TICKS = Math.max(1, Math.round(ARROW_FLIGHT / TICK_S));
+// Exported for the renderer, which draws in-flight volleys off the ring buffer.
+export const FLIGHT_TICKS = Math.max(1, Math.round(ARROW_FLIGHT / TICK_S));
 
 export const create = () => {
   const cols = Math.ceil(WORLD_W / AIM_CELL);
@@ -39,9 +40,12 @@ export const create = () => {
     counts: [new Uint16Array(n), new Uint16Array(n)], // per-team occupants per cell
     landing: new Float32Array(n),                     // damage landing this tick
     // Pending-impact ring buffer. RELOAD > FLIGHT keeps each archer to at most
-    // one volley in the air, so MAX_UNITS entries can never overflow.
+    // one volley in the air, so MAX_UNITS entries can never overflow. Launch
+    // points (qX0/qY0) are render-only: the sim resolves impacts by cell.
     qCell: new Int32Array(MAX_UNITS),
     qTick: new Int32Array(MAX_UNITS),
+    qX0: new Float32Array(MAX_UNITS),
+    qY0: new Float32Array(MAX_UNITS),
     qHead: 0,
     qTail: 0,
     dirty: false, // landing[] has residue from the previous tick
@@ -93,6 +97,8 @@ const fire = (a, count, tick) => {
     if (best === -1) { U.cooldown[i] = ARCHER_RESCAN; continue; }
     a.qCell[a.qTail] = best;
     a.qTick[a.qTail] = tick + FLIGHT_TICKS;
+    a.qX0[a.qTail] = xi;
+    a.qY0[a.qTail] = yi;
     a.qTail = (a.qTail + 1) % MAX_UNITS;
     U.cooldown[i] = ARCHER_RELOAD;
   }

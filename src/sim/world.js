@@ -61,6 +61,7 @@ export const init = (seed = 0) => {
   }
   tick = 0;
   manualTarget0 = null;
+  deaths.n = 0;
   U.reset();
   spawnArmies();
 };
@@ -71,6 +72,15 @@ export const init = (seed = 0) => {
 export const setManualTarget = (x, y) => { manualTarget0 = { x, y }; };
 
 export const getStats = () => stats;
+
+// Read-only views for the renderer: in-flight volleys come straight off the
+// archery ring buffer, and the tick anchors their flight interpolation.
+export const getArchery = () => archery;
+export const getTick = () => tick;
+
+// Death log for the renderer (blood decals): positions of units killed since
+// the consumer last reset `n`. Write-only for the sim — determinism unaffected.
+export const deaths = { x: new Float32Array(MAX_UNITS), y: new Float32Array(MAX_UNITS), n: 0 };
 
 const spawnArmies = () => {
   spawnArmy(W * 0.06, W * 0.24, 0);
@@ -315,6 +325,12 @@ export const step = (dt) => {
   U.compactDead();
 };
 
+// Mark a unit dead and log where it fell for the renderer.
+const kill = (i) => {
+  U.state[i] = DEAD;
+  deaths.n < MAX_UNITS && (deaths.x[deaths.n] = U.x[i], deaths.y[deaths.n] = U.y[i], deaths.n++);
+};
+
 // --- apply accumulated damage, then resolve morale-driven state transitions ---
 const resolveDamage = (count) => {
   for (let i = 0; i < count; i++) {
@@ -324,7 +340,7 @@ const resolveDamage = (count) => {
     U.morale[i] = m;
 
     U.hp[i] <= 0
-      ? (U.state[i] = DEAD)
+      ? kill(i)
       : U.state[i] === ROUTING
         ? (m >= RALLY_THRESHOLD && (U.state[i] = ACTIVE))
         : m <= ROUT_THRESHOLD && (U.state[i] = ROUTING);
