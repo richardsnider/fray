@@ -1,12 +1,14 @@
 // Canvas 2D renderer. Terrain is baked once into an offscreen world-sized canvas
 // and blitted per-frame with a source-rect that follows the camera (the browser
-// does the zoom scaling, GPU-accelerated). Units are drawn as small filled rects,
-// transformed to screen space and culled to the viewport.
+// does the zoom scaling, GPU-accelerated). Units are pre-baked sprite stamps
+// (pikes squares, archers diamonds, knights a horse-and-rider silhouette),
+// transformed to screen space, culled, and drawn with one drawImage each.
 //
 // The split is: the bake may be expensive (fine noise octaves, ordered
 // dithering), the per-frame path must stay cheap (one terrain blit, binned
-// fillRects, one vignette blit). Blood decals are stamped into the baked canvas
-// as units die, so the battlefield accumulates scars at zero per-frame cost.
+// sprite stamps, one vignette blit). Blood decals are stamped into the baked
+// canvas as units die, so the battlefield accumulates scars at zero per-frame
+// cost, and unit sprites re-bake only when zoom changes (wheel, not per frame).
 //
 // A renderer is plain data ({ canvas, ctx, width, height, styles, terrain }); the
 // functions below take it as their first arg. Swapping this for a WebGL
@@ -20,7 +22,7 @@ import { FLIGHT_TICKS } from '../sim/archery.js';
 import { viewWorldW, viewWorldH } from './camera.js';
 import { lerp, clamp, clamp01, smoothstep, mag } from '../util/math.js';
 import {
-  MAX_UNITS, TEAM_COLORS, UNIT_TYPE_COUNT, WORLD_W, WORLD_H, WATER_LEVEL, AIM_CELL,
+  MAX_UNITS, TEAM_COLORS, UNIT_TYPE_COUNT, UnitType, WORLD_W, WORLD_H, WATER_LEVEL, AIM_CELL,
 } from '../config.js';
 
 const TERRAIN_SCALE = 2;   // bake texels per world unit; 2 → crisp at max zoom. One-time cost (~1.5s).
@@ -48,24 +50,29 @@ const BAYER4 = [0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5];
 
 const ROUTING = U.STATE.ROUTING;
 
-// Per-type look, kept subtle so the team hue still dominates. Each type nudges
-// the team color toward an accent and scales the dot: knights read as bright,
-// larger horse; archers as smaller, drab leather; pikes as the plain team base.
+// Per-type look: archers and pikes wear the plain team color — shape (diamond
+// vs square) tells them apart — while knights get a slight white-lifted accent.
 //                     KNIGHT              ARCHER               PIKE
-const TYPE_ACCENT = [[255, 255, 255],   [120, 140, 70],      [0, 0, 0]];
-const TYPE_ACCENT_K = [0.16, 0.32, 0.0];   // blend toward accent
-const TYPE_BRIGHT = [1.12, 0.82, 0.95];    // brightness multiplier
-const TYPE_SCALE = [1.8, 0.9, 1.2];        // dot size multiplier
+const TYPE_ACCENT = [[255, 255, 255],   [0, 0, 0],           [0, 0, 0]];
+const TYPE_ACCENT_K = [0.16, 0.0, 0.0];    // blend toward accent
+const TYPE_BRIGHT = [1.12, 1.0, 1.0];      // brightness multiplier
+const TYPE_SCALE = [1.4, 0.9, 1.2];        // base dot size multiplier (the knight's horse spans 1.6×1.35 dots)
 
-const OUTLINE_STYLE = 'rgb(10,8,10)';      // near-black rim so dots pop off any ground
+const OUTLINE_STYLE = 'rgb(10,8,10)';      // near-black rim baked into sprites so units pop off any ground
 const ARROW_STYLE = 'rgb(216,204,170)';    // pale ash shafts read against the dark ground
 const BLOOD_A = 'rgb(86,18,14)';
 const BLOOD_B = 'rgb(58,12,10)';
 
 const clamp255 = (v) => clamp(v, 0, 255) | 0;
 
-// One draw bucket per (team, type, routing) combination.
-const BIN_COUNT = TEAM_COLORS.length * UNIT_TYPE_COUNT * 2;
+const KNIGHT = UnitType.KNIGHT;
+const FACING_COUNT = 4; // right, left, down, up — knights turn; other types use 0
+
+// One draw bucket per (team, type, routing, facing) combination; each bucket
+// draws one pre-baked sprite. Non-knight facings alias facing 0.
+const BIN_COUNT = TEAM_COLORS.length * UNIT_TYPE_COUNT * 2 * FACING_COUNT;
+const binIndex = (team, type, routing, facing) =>
+  ((team * UNIT_TYPE_COUNT + type) * 2 + routing) * FACING_COUNT + facing;
 
 // Per-bucket screen positions, refilled each frame as interleaved (x, y) pairs.
 // Int16 holds any screen coordinate and truncates like the old `sx | 0`.
@@ -87,6 +94,101 @@ const buildStyles = () => TEAM_COLORS.map((c) =>
   })
 );
 
+// --- unit sprites ------------------------------------------------------------
+// Every unit is a sprite stamp baked per (team, type, routing, facing) at the
+// current zoom, outline included, so the per-frame cost is one drawImage per
+// unit. Knights get a horse-and-rider silhouette with four facings picked from
+// velocity; archers a diamond; pikes the plain square.
+
+// Horse-and-rider silhouette (facing right) as rects in units of the knight's
+// dot size: body, neck+head, rider, rear leg, front leg. Head/rider hang below
+// the body bar — the small leg nubs merge into the baked outline, so the big
+// bumps have to be the ones pointing down for the shape to read as an animal.
+const HORSE_RECTS = [
+  [0.0, 0.3, 1.6, 0.55],   // Body
+  [0.0, 0.7, 0.35, 0.55],  // Neck + head (moved to the left)
+  [0.75, 0.8, 0.4, 0.5],   // Rider
+  [1.2, 0.0, 0.25, 0.3],   // Rear leg (swapped position)
+  [0.15, 0.0, 0.25, 0.3],  // Front leg (swapped position)
+];
+const HORSE_W = 1.6, HORSE_H = 1.35; // silhouette extents, in dots
+
+// Map a right-facing rect into the given facing: mirror for left, transpose
+// for down, transpose + mirror for up.
+const faceRect = ([x, y, w, h], facing) =>
+  facing === 0 ? [x, y, w, h]
+    : facing === 1 ? [HORSE_W - x - w, y, w, h]
+    : facing === 2 ? [y, x, h, w]
+    : [y, HORSE_W - x - w, h, w];
+
+// Fill `rects` (in dot units) scaled by s at a `pad` inset, each side inflated
+// by `inflate` px — the outline pass re-fills the same silhouette inflated.
+const fillRects = (g, rects, s, pad, inflate) => {
+  for (const [x, y, w, h] of rects) {
+    const x0 = Math.round(x * s), y0 = Math.round(y * s);
+    const pw = Math.max(1, Math.round((x + w) * s) - x0);
+    const ph = Math.max(1, Math.round((y + h) * s) - y0);
+    g.fillRect(pad + x0 - inflate, pad + y0 - inflate, pw + 2 * inflate, ph + 2 * inflate);
+  }
+};
+
+// Pixel-row diamond: crisp at any size, no path antialiasing.
+const fillDiamond = (g, x0, y0, size) => {
+  for (let row = 0; row < size; row++) {
+    const dy = Math.abs(row + 0.5 - size / 2);
+    const w = Math.max(1, Math.round(size - 2 * dy));
+    g.fillRect(x0 + ((size - w) >> 1), y0 + row, w, 1);
+  }
+};
+
+const bakeSprite = (style, type, s, o, facing) => {
+  const c = document.createElement('canvas');
+  if (type === KNIGHT) {
+    const rects = HORSE_RECTS.map((rc) => faceRect(rc, facing));
+    c.width = Math.ceil((facing < 2 ? HORSE_W : HORSE_H) * s) + 2 * o;
+    c.height = Math.ceil((facing < 2 ? HORSE_H : HORSE_W) * s) + 2 * o;
+    const g = c.getContext('2d');
+    o && (g.fillStyle = OUTLINE_STYLE, fillRects(g, rects, s, o, o));
+    g.fillStyle = style;
+    fillRects(g, rects, s, o, 0);
+  } else {
+    c.width = c.height = s + 2 * o;
+    const g = c.getContext('2d');
+    if (type === UnitType.ARCHER) {
+      o && (g.fillStyle = OUTLINE_STYLE, fillDiamond(g, 0, 0, s + 2 * o));
+      g.fillStyle = style;
+      fillDiamond(g, o, o, s);
+    } else {
+      o && (g.fillStyle = OUTLINE_STYLE, g.fillRect(0, 0, s + 2 * o, s + 2 * o));
+      g.fillStyle = style;
+      g.fillRect(o, o, s, s);
+    }
+  }
+  // Anchor at the sprite center so stamps stay put as zoom re-bakes them.
+  return { c, ax: c.width >> 1, ay: c.height >> 1 };
+};
+
+// (Re)bake the whole sprite set for a zoom level — a few dozen tiny canvases,
+// triggered from render() only when the zoom actually changed.
+const buildSprites = (r, zoom) => {
+  r.spriteZoom = zoom;
+  for (let team = 0; team < TEAM_COLORS.length; team++) {
+    for (let type = 0; type < UNIT_TYPE_COUNT; type++) {
+      const s = Math.max(1, Math.round(1.5 * TYPE_SCALE[type] * zoom));
+      const o = s >= 3 ? Math.max(1, s >> 2) : 0; // rim, skipped when dots are tiny
+      const facings = type === KNIGHT ? FACING_COUNT : 1;
+      for (let routing = 0; routing < 2; routing++) {
+        const style = r.styles[team][type][routing];
+        for (let f = 0; f < FACING_COUNT; f++) {
+          r.sprites[binIndex(team, type, routing, f)] = f < facings
+            ? bakeSprite(style, type, s, o, f)
+            : r.sprites[binIndex(team, type, routing, 0)];
+        }
+      }
+    }
+  }
+};
+
 export const create = (canvas) => {
   const ctx = canvas.getContext('2d', { alpha: false });
   ctx.imageSmoothingEnabled = false; // crisp pixel scaling
@@ -94,6 +196,7 @@ export const create = (canvas) => {
     canvas, ctx, width: 0, height: 0, styles: buildStyles(),
     terrain: null, tctx: null, vignette: null,
     bins: createBins(), binN: new Int32Array(BIN_COUNT),
+    sprites: new Array(BIN_COUNT), spriteZoom: 0,
   };
   buildTerrain(r);
   resize(r);
@@ -290,16 +393,17 @@ export const render = (r, alpha, cam) => {
     0, 0, w, h,
   );
 
-  // --- units: transform to screen, cull, draw in color/size buckets -----------
+  // --- units: transform to screen, cull, stamp sprites in buckets -------------
   const count = U.count;
   const zoom = cam.zoom;
   const camX = cam.x;
   const camY = cam.y;
 
-  // One pass bins each visible unit's screen position by (team, type, routing);
-  // each bin then draws with fillStyle and dot size set once. Bins are emitted
-  // in the same nested order the old 12 filter passes used, so the output is
-  // pixel-identical at 1/12th the iteration.
+  zoom !== r.spriteZoom && buildSprites(r, zoom);
+
+  // One pass bins each visible unit's screen position by (team, type, routing,
+  // facing); each bin then stamps its pre-baked sprite. Facing only varies for
+  // knights, quantized from velocity to right/left/down/up.
   const { bins, binN } = r;
   binN.fill(0);
   for (let i = 0; i < count; i++) {
@@ -309,7 +413,14 @@ export const render = (r, alpha, cam) => {
     const wy = U.py[i] + (U.y[i] - U.py[i]) * alpha;
     const sy = (wy - camY) * zoom;
     if (sy < 0 || sy >= h) continue;
-    const b = (U.team[i] * UNIT_TYPE_COUNT + U.type[i]) * 2 + (U.state[i] === ROUTING ? 1 : 0);
+    const type = U.type[i];
+    let f = 0;
+    type === KNIGHT && (
+      f = Math.abs(U.vx[i]) >= Math.abs(U.vy[i])
+        ? (U.vx[i] >= 0 ? 0 : 1)
+        : (U.vy[i] >= 0 ? 2 : 3)
+    );
+    const b = binIndex(U.team[i], type, U.state[i] === ROUTING ? 1 : 0, f);
     const bin = bins[b];
     const n = binN[b];
     bin[n] = sx;
@@ -317,26 +428,12 @@ export const render = (r, alpha, cam) => {
     binN[b] = n + 2;
   }
 
-  for (let team = 0; team < r.styles.length; team++) {
-    for (let type = 0; type < UNIT_TYPE_COUNT; type++) {
-      const dot = Math.max(1, Math.round(1.5 * TYPE_SCALE[type] * zoom));
-      // Dark rim under each dot so units pop off the terrain; skipped while the
-      // dots are too small to spare the pixels.
-      const o = dot >= 3 ? Math.max(1, dot >> 2) : 0;
-      for (let routing = 0; routing < 2; routing++) {
-        const b = (team * UNIT_TYPE_COUNT + type) * 2 + routing;
-        const n = binN[b];
-        if (n === 0) continue;
-        const bin = bins[b];
-        if (o) {
-          ctx.fillStyle = OUTLINE_STYLE;
-          const side = dot + 2 * o;
-          for (let k = 0; k < n; k += 2) ctx.fillRect(bin[k] - o, bin[k + 1] - o, side, side);
-        }
-        ctx.fillStyle = r.styles[team][type][routing];
-        for (let k = 0; k < n; k += 2) ctx.fillRect(bin[k], bin[k + 1], dot, dot);
-      }
-    }
+  for (let b = 0; b < BIN_COUNT; b++) {
+    const n = binN[b];
+    if (n === 0) continue;
+    const { c, ax, ay } = r.sprites[b];
+    const bin = bins[b];
+    for (let k = 0; k < n; k += 2) ctx.drawImage(c, bin[k] - ax, bin[k + 1] - ay);
   }
 
   // --- overlays: volleys in the air, then the vignette ------------------------
