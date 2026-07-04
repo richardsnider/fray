@@ -7,9 +7,9 @@
 //
 // A field is plain data; the functions below read/mutate it as their first arg.
 
+import { lerp, clampIndex } from '../util/math.js';
+
 const INF = 1e9;
-const lerp = (a, b, t) => a + (b - a) * t;
-const clampCell = (v, max) => (v < 0 ? 0 : v >= max ? max - 1 : v);
 
 export const create = (worldW, worldH, cell) => {
   const cols = Math.ceil(worldW / cell) + 1;
@@ -35,8 +35,8 @@ export const setBlocked = (ff, fn) => {
 };
 
 const cellIndex = (ff, wx, wy) => {
-  const cx = clampCell((wx / ff.cell) | 0, ff.cols);
-  const cy = clampCell((wy / ff.cell) | 0, ff.rows);
+  const cx = clampIndex((wx / ff.cell) | 0, ff.cols);
+  const cy = clampIndex((wy / ff.cell) | 0, ff.rows);
   return cy * ff.cols + cx;
 };
 
@@ -112,8 +112,8 @@ export const sampleDir = (ff, wx, wy, out) => {
   const fy0 = Math.floor(fy);
   const tx = fx - fx0;
   const ty = fy - fy0;
-  const x0 = clampCell(fx0, cols);
-  const y0 = clampCell(fy0, rows);
+  const x0 = clampIndex(fx0, cols);
+  const y0 = clampIndex(fy0, rows);
   const x1 = x0 + 1 < cols ? x0 + 1 : x0;
   const y1 = y0 + 1 < rows ? y0 + 1 : y0;
   const i00 = y0 * cols + x0, i01 = y0 * cols + x1;

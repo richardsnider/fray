@@ -27,8 +27,6 @@ export const viewWorldH = (cam) => cam.viewH / cam.zoom;
 
 export const screenToWorldX = (cam, sx) => cam.x + sx / cam.zoom;
 export const screenToWorldY = (cam, sy) => cam.y + sy / cam.zoom;
-export const worldToScreenX = (cam, wx) => (wx - cam.x) * cam.zoom;
-export const worldToScreenY = (cam, wy) => (wy - cam.y) * cam.zoom;
 
 // Pan by a screen-space delta (e.g. a mouse drag), in the natural direction.
 export const panByScreen = (cam, dx, dy) => {

@@ -6,8 +6,7 @@
 // A grid is plain data: { cell, cols, rows, heads, next }. build() mutates it.
 
 import { MAX_UNITS } from '../config.js';
-
-const clampCell = (c, max) => (c < 0 ? 0 : c >= max ? max - 1 : c);
+import { clampIndex } from '../util/math.js';
 
 export const create = (width, height, cell) => {
   const cols = Math.max(1, Math.ceil(width / cell));
@@ -23,8 +22,8 @@ export const build = (g, count, xs, ys) => {
   const { cell, cols, rows, heads, next } = g;
   heads.fill(-1);
   for (let i = 0; i < count; i++) {
-    const cx = clampCell((xs[i] / cell) | 0, cols);
-    const cy = clampCell((ys[i] / cell) | 0, rows);
+    const cx = clampIndex((xs[i] / cell) | 0, cols);
+    const cy = clampIndex((ys[i] / cell) | 0, rows);
     const c = cy * cols + cx;
     next[i] = heads[c];
     heads[c] = i;

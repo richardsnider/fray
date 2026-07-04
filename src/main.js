@@ -8,7 +8,7 @@ import * as Camera from './render/camera.js';
 import * as Input from './input/input.js';
 import * as world from './sim/world.js';
 import { hashSeed } from './sim/rng.js';
-import { TICK_MS, WORLD_W, WORLD_H } from './config.js';
+import { TICK_MS, TICK_S, WORLD_W, WORLD_H } from './config.js';
 
 const canvas = document.getElementById('c');
 const hud = document.getElementById('hud');
@@ -64,7 +64,7 @@ const frame = (now) => {
 
   const t0 = performance.now();
   while (acc >= TICK_MS) {
-    world.step(TICK_MS / 1000);
+    world.step(TICK_S);
     acc -= TICK_MS;
   }
   simMs = performance.now() - t0;

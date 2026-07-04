@@ -6,6 +6,7 @@ import * as T from './terrain.js';
 import * as Grid from './spatialGrid.js';
 import * as Flow from './flowField.js';
 import { mulberry32 } from './rng.js';
+import { clampIndex } from '../util/math.js';
 import {
   MAX_UNITS, WORLD_W, WORLD_H, ARMY_SIZE, SEEK_ACCEL, SEP_RADIUS, SEP_ACCEL, DAMPING,
   ATTACK_RANGE, FLEE_SPEED_MULT,
@@ -65,6 +66,9 @@ export const init = (seed = 0) => {
   spawnArmies();
 };
 
+// Called by the input layer, which receives `world` via dependency injection —
+// so static analysis can't see the edge (hence the ignore).
+// fallow-ignore-next-line unused-export
 export const setManualTarget = (x, y) => { manualTarget0 = { x, y }; };
 
 export const getStats = () => stats;
@@ -157,8 +161,8 @@ export const step = (dt) => {
     let ceIdx = -1;         // closest enemy
     let ceD2 = Infinity;
 
-    const cx = clampCell((xi / cell) | 0, cols);
-    const cy = clampCell((yi / cell) | 0, rows);
+    const cx = clampIndex((xi / cell) | 0, cols);
+    const cy = clampIndex((yi / cell) | 0, rows);
     for (let oy = -1; oy <= 1; oy++) {
       const gy = cy + oy;
       if (gy < 0 || gy >= rows) continue;
@@ -281,10 +285,10 @@ export const step = (dt) => {
     // Terrain speed factor: brush slows; uphill slows, downhill speeds up.
     let tf = 1 - T.cover[T.cellOf(xi, yi)] * COVER_SLOW;
     if (sp > 0.001) {
-      const tcx = tClampX((xi / T.CELL) | 0);
-      const tcy = tClampY((yi / T.CELL) | 0);
-      const gx = T.elevation[tcy * T.cols + tClampX(tcx + 1)] - T.elevation[tcy * T.cols + tClampX(tcx - 1)];
-      const gy = T.elevation[tClampY(tcy + 1) * T.cols + tcx] - T.elevation[tClampY(tcy - 1) * T.cols + tcx];
+      const tcx = clampIndex((xi / T.CELL) | 0, T.cols);
+      const tcy = clampIndex((yi / T.CELL) | 0, T.rows);
+      const gx = T.elevation[tcy * T.cols + clampIndex(tcx + 1, T.cols)] - T.elevation[tcy * T.cols + clampIndex(tcx - 1, T.cols)];
+      const gy = T.elevation[clampIndex(tcy + 1, T.rows) * T.cols + tcx] - T.elevation[clampIndex(tcy - 1, T.rows) * T.cols + tcx];
       const slopeAlong = (gx * nvx + gy * nvy) / sp; // >0 = uphill
       tf -= slopeAlong * SLOPE_SPEED;
     }
@@ -306,58 +310,59 @@ export const step = (dt) => {
     U.y[i] = ny;
   }
 
-  // --- ranged: each ready archer looses one arrow at its nearest enemy --------
-  // Reload cadence rate-limits this scan, so only a fraction of archers search
-  // per tick. Damage is cut by the target's armor, the RPS matchup, and — the
-  // deferred cover mechanic — how much brush the target is standing in.
-  {
-    const rcell = rangedGrid.cell;
-    const rcols = rangedGrid.cols;
-    const rrows = rangedGrid.rows;
-    const rheads = rangedGrid.heads;
-    const rnext = rangedGrid.next;
-    const rangeR2 = ARCHER_RANGE * ARCHER_RANGE;
-    for (let i = 0; i < count; i++) {
-      if (U.type[i] !== ARCHER || U.state[i] !== ACTIVE || U.cooldown[i] > 0) continue;
-      const xi = U.x[i];
-      const yi = U.y[i];
-      const teami = U.team[i];
-      let best = -1, bestD2 = rangeR2;
-      const cx = clampCell((xi / rcell) | 0, rcols);
-      const cy = clampCell((yi / rcell) | 0, rrows);
-      for (let oy = -1; oy <= 1; oy++) {
-        const gy = cy + oy;
-        if (gy < 0 || gy >= rrows) continue;
-        for (let ox = -1; ox <= 1; ox++) {
-          const gx = cx + ox;
-          if (gx < 0 || gx >= rcols) continue;
-          let j = rheads[gy * rcols + gx];
-          while (j !== -1) {
-            if (U.team[j] !== teami && U.state[j] !== DEAD) {
-              const dx = xi - U.x[j];
-              const dy = yi - U.y[j];
-              const dd = dx * dx + dy * dy;
-              dd < bestD2 && (bestD2 = dd, best = j);
-            }
-            j = rnext[j];
+  resolveRanged(count);
+  resolveDamage(count);
+  U.compactDead();
+};
+
+// --- ranged: each ready archer looses one arrow at its nearest enemy ----------
+// Reload cadence rate-limits this scan, so only a fraction of archers search per
+// tick. Damage is cut by the target's armor, the RPS matchup, and — the deferred
+// cover mechanic — how much brush the target is standing in.
+const resolveRanged = (count) => {
+  const { cell, cols, rows, heads, next } = rangedGrid;
+  const rangeR2 = ARCHER_RANGE * ARCHER_RANGE;
+  for (let i = 0; i < count; i++) {
+    if (U.type[i] !== ARCHER || U.state[i] !== ACTIVE || U.cooldown[i] > 0) continue;
+    const xi = U.x[i];
+    const yi = U.y[i];
+    const teami = U.team[i];
+    let best = -1, bestD2 = rangeR2;
+    const cx = clampIndex((xi / cell) | 0, cols);
+    const cy = clampIndex((yi / cell) | 0, rows);
+    for (let oy = -1; oy <= 1; oy++) {
+      const gy = cy + oy;
+      if (gy < 0 || gy >= rows) continue;
+      for (let ox = -1; ox <= 1; ox++) {
+        const gx = cx + ox;
+        if (gx < 0 || gx >= cols) continue;
+        let j = heads[gy * cols + gx];
+        while (j !== -1) {
+          if (U.team[j] !== teami && U.state[j] !== DEAD) {
+            const dx = xi - U.x[j];
+            const dy = yi - U.y[j];
+            const dd = dx * dx + dy * dy;
+            dd < bestD2 && (bestD2 = dd, best = j);
           }
+          j = next[j];
         }
       }
-      if (best !== -1) {
-        const tt = U.type[best];
-        const cover = T.cover[T.cellOf(U.x[best], U.y[best])];
-        dmg[best] += ARCHER_SHOT_DMG * DMG_MULT[ARCHER][tt] * (1 - TYPE_ARMOR[tt]) * (1 - cover * ARROW_COVER);
-        U.cooldown[i] = ARCHER_RELOAD;
-      }
+    }
+    if (best !== -1) {
+      const tt = U.type[best];
+      const cover = T.cover[T.cellOf(U.x[best], U.y[best])];
+      dmg[best] += ARCHER_SHOT_DMG * DMG_MULT[ARCHER][tt] * (1 - TYPE_ARMOR[tt]) * (1 - cover * ARROW_COVER);
+      U.cooldown[i] = ARCHER_RELOAD;
     }
   }
+};
 
-  // --- apply damage, resolve morale-driven state transitions ------------------
+// --- apply accumulated damage, then resolve morale-driven state transitions ---
+const resolveDamage = (count) => {
   for (let i = 0; i < count; i++) {
     const d = dmg[i];
     d > 0 && (U.hp[i] -= d, U.morale[i] -= d * HIT_FEAR, dmg[i] = 0);
-    let m = U.morale[i];
-    m = m > MORALE_MAX ? MORALE_MAX : m < 0 ? 0 : m;
+    const m = U.morale[i] > MORALE_MAX ? MORALE_MAX : U.morale[i] < 0 ? 0 : U.morale[i];
     U.morale[i] = m;
 
     U.hp[i] <= 0
@@ -366,10 +371,4 @@ export const step = (dt) => {
         ? (m >= RALLY_THRESHOLD && (U.state[i] = ACTIVE))
         : m <= ROUT_THRESHOLD && (U.state[i] = ROUTING);
   }
-
-  U.compactDead();
 };
-
-const clampCell = (c, max) => (c < 0 ? 0 : c >= max ? max - 1 : c);
-const tClampX = (cx) => (cx < 0 ? 0 : cx >= T.cols ? T.cols - 1 : cx);
-const tClampY = (cy) => (cy < 0 ? 0 : cy >= T.rows ? T.rows - 1 : cy);

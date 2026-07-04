@@ -11,6 +11,7 @@
 import * as U from '../sim/units.js';
 import * as T from '../sim/terrain.js';
 import { viewWorldW, viewWorldH } from './camera.js';
+import { lerp, clamp, clamp01 } from '../util/math.js';
 import { TEAM_COLORS, UNIT_TYPE_COUNT, WORLD_W, WORLD_H, WATER_LEVEL } from '../config.js';
 
 const TERRAIN_SCALE = 0.75; // bake resolution; higher = crisper (esp. zoomed). One-time cost.
@@ -35,9 +36,7 @@ const TYPE_ACCENT_K = [0.16, 0.32, 0.0];   // blend toward accent
 const TYPE_BRIGHT = [1.12, 0.82, 0.95];    // brightness multiplier
 const TYPE_SCALE = [1.8, 0.9, 1.2];        // dot size multiplier
 
-const lerp = (a, b, t) => a + (b - a) * t;
-const clamp01 = (v) => (v < 0 ? 0 : v > 1 ? 1 : v);
-const clamp255 = (v) => (v < 0 ? 0 : v > 255 ? 255 : v | 0);
+const clamp255 = (v) => clamp(v, 0, 255) | 0;
 
 // Fill styles: [team][type][active|routing]. Routing dots dim to 45% so broken
 // units read at a glance.

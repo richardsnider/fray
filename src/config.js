@@ -1,8 +1,8 @@
 // Central tuning knobs. Keep gameplay numbers here so the sim modules stay generic.
 
-export const TICK_HZ = 33;              // fixed simulation rate
+const TICK_HZ = 33;                     // fixed simulation rate (derivation base)
 export const TICK_MS = 1000 / TICK_HZ;
-export const TICK_S = 1 / TICK_HZ;
+export const TICK_S = 1 / TICK_HZ;      // per-tick delta in seconds
 
 export const MAX_UNITS = 20000;         // typed-array capacity (hard ceiling)
 
@@ -15,8 +15,7 @@ export const MAX_ZOOM = 5;              // min zoom is derived so the view can't
 // Vertical-slice army sizes. Bump these to stress-test the renderer/grid.
 export const ARMY_SIZE = 2500;
 
-// Steering / movement (world units per second).
-export const MAX_SPEED = 42;           // legacy/fallback march speed; per-type below
+// Steering / movement (world units per second). Per-type march speed is TYPE_SPEED.
 export const SEEK_ACCEL = 90;
 export const SEP_RADIUS = 6;            // also the spatial-grid cell size
 export const SEP_ACCEL = 220;
@@ -38,8 +37,7 @@ export const FLOW_CELL = 24;            // world units per pathfinding cell
 export const FLOW_UPDATE_TICKS = 8;     // recompute cadence (~4x/sec at 33Hz)
 
 // Combat.
-export const ATTACK_RANGE = 5;          // melee reach (world units)
-export const ATTACK_DPS = 16;           // legacy base melee dps (per-type below)
+export const ATTACK_RANGE = 5;          // melee reach (world units). Per-type dps is TYPE_MELEE_DPS.
 export const FLEE_SPEED_MULT = 1.6;     // routing units run faster than they march
 
 // --- Unit types -------------------------------------------------------------

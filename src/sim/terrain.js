@@ -5,6 +5,7 @@
 // reads it (bilinear) to bake the ground.
 
 import { WORLD_W, WORLD_H, TERRAIN_CELL, WATER_LEVEL } from '../config.js';
+import { lerp, clamp01, clampIndex } from '../util/math.js';
 
 export const CELL = TERRAIN_CELL;
 
@@ -12,7 +13,7 @@ export const CELL = TERRAIN_CELL;
 export let cols = 0;
 export let rows = 0;
 export let elevation = new Float32Array(0); // 0..1
-export let water = new Uint8Array(0);        // 1 = impassable
+let water = new Uint8Array(0);               // 1 = impassable (internal; use isWaterAt)
 export let cover = new Float32Array(0);      // 0..1 brush density
 
 // Folded into the value-noise hash so each seed yields a distinct battlefield.
@@ -47,10 +48,8 @@ export const generate = (s = 0) => {
 };
 
 // --- sampling --------------------------------------------------------------
-const clampX = (cx) => (cx < 0 ? 0 : cx >= cols ? cols - 1 : cx);
-const clampY = (cy) => (cy < 0 ? 0 : cy >= rows ? rows - 1 : cy);
-
-export const cellOf = (wx, wy) => clampY((wy / CELL) | 0) * cols + clampX((wx / CELL) | 0);
+export const cellOf = (wx, wy) =>
+  clampIndex((wy / CELL) | 0, rows) * cols + clampIndex((wx / CELL) | 0, cols);
 
 export const isWaterAt = (wx, wy) => water[cellOf(wx, wy)] === 1;
 export const elevBilinear = (wx, wy) => bilinear(elevation, wx, wy);
@@ -63,8 +62,8 @@ const bilinear = (grid, wx, wy) => {
   const fy0 = Math.floor(fy);
   const tx = fx - fx0;
   const ty = fy - fy0;
-  const x0 = clampX(fx0);
-  const y0 = clampY(fy0);
+  const x0 = clampIndex(fx0, cols);
+  const y0 = clampIndex(fy0, rows);
   const x1 = x0 + 1 < cols ? x0 + 1 : x0;
   const y1 = y0 + 1 < rows ? y0 + 1 : y0;
   const a = grid[y0 * cols + x0];
@@ -75,9 +74,6 @@ const bilinear = (grid, wx, wy) => {
 };
 
 // --- helpers ---------------------------------------------------------------
-const clamp01 = (v) => (v < 0 ? 0 : v > 1 ? 1 : v);
-const lerp = (a, b, t) => a + (b - a) * t;
-
 const smoothstep = (e0, e1, x) => {
   const t = clamp01((x - e0) / (e1 - e0));
   return t * t * (3 - 2 * t);
