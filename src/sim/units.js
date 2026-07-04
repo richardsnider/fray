@@ -18,13 +18,15 @@ export const type = new Uint8Array(MAX_UNITS); // UnitType: 0 knight, 1 archer, 
 export const state = new Uint8Array(MAX_UNITS);
 export const selected = new Uint8Array(MAX_UNITS); // 1 if the player has this unit selected
 export const cooldown = new Float32Array(MAX_UNITS); // type timer: archer reload / cavalry charge recovery
+export const rallyX = new Float32Array(MAX_UNITS);   // default-AI march goal (enemy side of the field)
+export const rallyY = new Float32Array(MAX_UNITS);
 
 export const STATE = { ACTIVE: 0, ROUTING: 1, DEAD: 2 };
 
 // `count` is exported live: importers see it grow via the module binding.
 export let count = 0;
 
-export const spawn = (sx, sy, t, ut) => {
+export const spawn = (sx, sy, t, ut, rx = sx, ry = sy) => {
   const i = count++;
   px[i] = x[i] = sx;
   py[i] = y[i] = sy;
@@ -36,6 +38,8 @@ export const spawn = (sx, sy, t, ut) => {
   state[i] = STATE.ACTIVE;
   selected[i] = 0;
   cooldown[i] = 0;
+  rallyX[i] = rx;
+  rallyY[i] = ry;
   return i;
 };
 
@@ -50,6 +54,7 @@ const copyUnit = (dst, src) => {
   team[dst] = team[src]; type[dst] = type[src]; state[dst] = state[src];
   selected[dst] = selected[src];
   cooldown[dst] = cooldown[src];
+  rallyX[dst] = rallyX[src]; rallyY[dst] = rallyY[src];
 };
 
 // Remove units flagged DEAD by swapping the last live unit into their slot.

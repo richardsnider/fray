@@ -4,7 +4,6 @@
 import * as U from './units.js';
 import * as T from './terrain.js';
 import * as Grid from './spatialGrid.js';
-import * as Flow from './flowField.js';
 import * as Archery from './archery.js';
 import { mulberry32 } from './rng.js';
 import { clamp, clampIndex, mag } from '../util/math.js';
@@ -15,7 +14,6 @@ import {
   MORALE_MAX, ROUT_THRESHOLD, RALLY_THRESHOLD, MORALE_REGEN,
   FEAR_OUTNUMBERED, FEAR_PANIC, HIT_FEAR,
   SLOPE_SPEED, COVER_SLOW, HEIGHT_DMG, WATER_LOOK, WATER_AVOID,
-  FLOW_CELL, FLOW_UPDATE_TICKS,
   UnitType, UNIT_TYPE_COUNT, ARMY_MIX, SQUAD_SIZE, SQUAD_RADIUS,
   TYPE_SPEED, TYPE_MELEE_DPS, TYPE_ARMOR, DMG_MULT,
   CHARGE_MIN_SPEED, CHARGE_DMG, CHARGE_MORALE, CHARGE_COOLDOWN,
@@ -29,22 +27,15 @@ const H = WORLD_H;
 let grid = null;        // fine grid (SEP_RADIUS) for separation + melee
 let archery = null;     // volley aim grid + pending-impact queue (sim/archery.js)
 
-// One flow field per team, routing around water toward that team's objective.
-const flows = [null, null];
 let tick = 0;
-const flowDir = { x: 0, y: 0 }; // reused scratch to avoid per-unit allocation
 
 // Incoming damage is accumulated here during the scan and applied after the full
 // pass, so kill resolution doesn't depend on unit iteration order.
 const dmg = new Float32Array(MAX_UNITS);
 
-// Per-team objective point. In the slice each team seeks the enemy's center of
-// mass, so the armies clash on their own.
-const targets = [{ x: 0, y: 0 }, { x: 0, y: 0 }];
-
 // Player control: a subset of team-0 units is `selected` (flag on the unit), and
-// they march to `playerTarget` instead of the team objective. Everything else
-// keeps advancing on the enemy on its own.
+// they march to `playerTarget` instead of their rally point. Everything else
+// advances on its own default rally point (assigned per squad at spawn).
 let playerTarget = null;
 
 // Live counts for the HUD, refreshed each tick.
@@ -59,11 +50,6 @@ export const init = (seed = 0) => {
   T.generate(seed);
   grid = Grid.create(W, H, SEP_RADIUS);
   archery = Archery.create();
-  const blocked = (wx, wy) => T.isWaterAt(wx, wy);
-  for (let t = 0; t < flows.length; t++) {
-    flows[t] = Flow.create(W, H, FLOW_CELL);
-    Flow.setBlocked(flows[t], blocked);
-  }
   tick = 0;
   playerTarget = null;
   deaths.n = 0;
@@ -143,10 +129,16 @@ const spawnArmy = (x0, x1, team) => {
 
 // Scatter n units of one type in a disk around a random deploy point. The center
 // is kept a radius inside the zone so the squad stays within its army's area.
+// Each squad also gets its own rally point somewhere on the enemy's half of the
+// field, so squads fan out toward scattered objectives and the battle breaks
+// into several fronts instead of collapsing into one central mob.
 const spawnSquad = (x0, x1, y0, y1, team, type, n) => {
   const r = SQUAD_RADIUS;
   const cx = rand(Math.min(x0 + r, x1), Math.max(x1 - r, x0));
   const cy = rand(Math.min(y0 + r, y1), Math.max(y1 - r, y0));
+  // Rally on the far side: team 0 (deploys left) heads right, team 1 vice-versa.
+  const rx = team === 0 ? rand(W * 0.55, W * 0.92) : rand(W * 0.08, W * 0.45);
+  const ry = rand(H * 0.1, H * 0.9);
   for (let i = 0; i < n; i++) {
     let x = cx, y = cy, tries = 0;
     // Uniform-in-disk offset; reject water so nobody spawns stranded, falling
@@ -157,26 +149,16 @@ const spawnSquad = (x0, x1, y0, y1, team, type, n) => {
       x = cx + Math.cos(ang) * rad;
       y = cy + Math.sin(ang) * rad;
     } while (T.isWaterAt(x, y) && ++tries < 8);
-    U.spawn(x, y, team, type);
+    U.spawn(x, y, team, type, rx, ry);
   }
 };
 
 const rand = (a, b) => a + rng() * (b - a);
 
-const updateTargets = () => {
-  // Centroid per team → default objective is "advance on the enemy mass".
-  // Routing units are excluded so a formation doesn't chase its own fleers.
-  let x0 = 0, y0 = 0, n0 = 0;
-  let x1 = 0, y1 = 0, n1 = 0;
+const updateStats = () => {
+  // Live per-team head count for the HUD.
   let a0 = 0, a1 = 0;
-  for (let i = 0; i < U.count; i++) {
-    const active = U.state[i] === ACTIVE;
-    U.team[i] === 0
-      ? (a0++, active && (x0 += U.x[i], y0 += U.y[i], n0++))
-      : (a1++, active && (x1 += U.x[i], y1 += U.y[i], n1++));
-  }
-  n1 && (targets[0].x = x1 / n1, targets[0].y = y1 / n1);
-  n0 && (targets[1].x = x0 / n0, targets[1].y = y0 / n0);
+  for (let i = 0; i < U.count; i++) U.team[i] === 0 ? a0++ : a1++;
   stats.team0 = a0;
   stats.team1 = a1;
 };
@@ -188,13 +170,7 @@ export const step = (dt) => {
   U.px.set(U.x.subarray(0, count));
   U.py.set(U.y.subarray(0, count));
 
-  updateTargets();
-
-  // Rebuild each team's flow field toward its objective, a few times a second.
-  tick % FLOW_UPDATE_TICKS === 0 && (
-    Flow.compute(flows[0], targets[0].x, targets[0].y),
-    Flow.compute(flows[1], targets[1].x, targets[1].y)
-  );
+  updateStats();
   tick++;
 
   Grid.build(grid, count, U.x, U.y);
@@ -308,26 +284,20 @@ export const step = (dt) => {
       ay = (ay / d) * SEEK_ACCEL;
     } else if (playerTarget && U.selected[i]) {
       // Player-controlled: selected units steer straight at the commanded point,
-      // ignoring the team objective. Water avoidance below still keeps them dry.
+      // ignoring their rally point. Water avoidance below still keeps them dry.
       ax = playerTarget.x - xi;
       ay = playerTarget.y - yi;
       const d = mag(ax, ay);
       d > 0.001 ? (ax = (ax / d) * SEEK_ACCEL, ay = (ay / d) * SEEK_ACCEL) : (ax = 0, ay = 0);
     } else {
-      // March toward the objective, following the team flow field so the path
-      // routes around water. Near the goal (or unreachable cells) the field
-      // reads zero, so fall back to steering straight at the objective point.
-      Flow.sampleDir(flows[teami], xi, yi, flowDir);
-      if (flowDir.x !== 0 || flowDir.y !== 0) {
-        ax = flowDir.x * SEEK_ACCEL;
-        ay = flowDir.y * SEEK_ACCEL;
-      } else {
-        const t = targets[teami];
-        ax = t.x - xi;
-        ay = t.y - yi;
-        const d = mag(ax, ay);
-        d > 0.001 && (ax = (ax / d) * SEEK_ACCEL, ay = (ay / d) * SEEK_ACCEL);
-      }
+      // Default AI: march toward this squad's rally point on the enemy side of
+      // the field. Scattered rally points fan the army into several fronts;
+      // enemies met on the way trigger the engage branch above. Shoreline
+      // avoidance below keeps the straight-line path out of the water.
+      ax = U.rallyX[i] - xi;
+      ay = U.rallyY[i] - yi;
+      const d = mag(ax, ay);
+      d > 0.001 ? (ax = (ax / d) * SEEK_ACCEL, ay = (ay / d) * SEEK_ACCEL) : (ax = 0, ay = 0);
     }
     ax += sx * SEP_ACCEL;
     ay += sy * SEP_ACCEL;
