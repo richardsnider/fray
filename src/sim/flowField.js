@@ -7,6 +7,7 @@
 //
 // A field is plain data; the functions below read/mutate it as their first arg.
 
+import { mag } from '../util/math.js';
 import { cellIndexOf, sampleBilinear } from '../util/grid2d.js';
 
 const INF = 1e9;
@@ -91,7 +92,7 @@ const buildFlow = (ff) => {
         }
       }
       // When no lower neighbor exists bx=by=0, so inv=0 zeroes the direction.
-      const inv = bx || by ? 1 / Math.hypot(bx, by) : 0;
+      const inv = bx || by ? 1 / mag(bx, by) : 0;
       dirX[c] = bx * inv;
       dirY[c] = by * inv;
     }
@@ -104,7 +105,7 @@ export const sampleDir = (ff, wx, wy, out) => {
   const { cols, rows, cell, dirX, dirY } = ff;
   const dx = sampleBilinear(dirX, cols, rows, cell, wx, wy);
   const dy = sampleBilinear(dirY, cols, rows, cell, wx, wy);
-  const m = Math.hypot(dx, dy);
+  const m = mag(dx, dy);
   const k = m > 0.001 ? 1 / m : 0; // zero at the goal / unreachable cells
   out.x = dx * k;
   out.y = dy * k;

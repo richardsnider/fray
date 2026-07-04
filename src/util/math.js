@@ -15,6 +15,11 @@ export const clamp01 = (v) => (v < 0 ? 0 : v > 1 ? 1 : v);
 // guard used by every spatial grid, flow field, and terrain lookup.
 export const clampIndex = (i, len) => (i < 0 ? 0 : i >= len ? len - 1 : i);
 
+// 2D vector magnitude. Not Math.hypot: hypot guards against overflow/underflow
+// that world-scale coordinates can't reach, and is many times slower in V8 —
+// this is the hot-path length function.
+export const mag = (x, y) => Math.sqrt(x * x + y * y);
+
 // Hermite smoothstep: 0 below e0, 1 above e1, smooth S-curve between.
 export const smoothstep = (e0, e1, x) => {
   const t = clamp01((x - e0) / (e1 - e0));

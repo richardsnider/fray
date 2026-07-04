@@ -7,7 +7,7 @@ import * as Grid from './spatialGrid.js';
 import * as Flow from './flowField.js';
 import * as Archery from './archery.js';
 import { mulberry32 } from './rng.js';
-import { clamp, clampIndex } from '../util/math.js';
+import { clamp, clampIndex, mag } from '../util/math.js';
 import { cellCoord } from '../util/grid2d.js';
 import {
   MAX_UNITS, WORLD_W, WORLD_H, ARMY_SIZE, SEEK_ACCEL, SEP_RADIUS, SEP_ACCEL, DAMPING,
@@ -211,7 +211,7 @@ export const step = (dt) => {
       // plus morale shock — unless the target is a braced pike, which negates it
       // (this is what makes pike beat cavalry). Then it goes on cooldown.
       (typei === KNIGHT && tt !== PIKE && U.cooldown[i] <= 0 &&
-        Math.hypot(U.vx[i], U.vy[i]) >= CHARGE_MIN_SPEED) &&
+        mag(U.vx[i], U.vy[i]) >= CHARGE_MIN_SPEED) &&
         (hit *= CHARGE_DMG, U.morale[ceIdx] -= CHARGE_MORALE, U.cooldown[i] = CHARGE_COOLDOWN);
       dmg[ceIdx] += hit;
       engaged = true;
@@ -233,7 +233,7 @@ export const step = (dt) => {
       if (ceIdx !== -1) {
         ax = xi - U.x[ceIdx];
         ay = yi - U.y[ceIdx];
-        const d = Math.hypot(ax, ay) || 1;
+        const d = mag(ax, ay) || 1;
         ax = (ax / d) * SEEK_ACCEL;
         ay = (ay / d) * SEEK_ACCEL;
       } else {
@@ -243,7 +243,7 @@ export const step = (dt) => {
       // Press the attack: lean into the closest enemy.
       ax = U.x[ceIdx] - xi;
       ay = U.y[ceIdx] - yi;
-      const d = Math.hypot(ax, ay) || 1;
+      const d = mag(ax, ay) || 1;
       ax = (ax / d) * SEEK_ACCEL;
       ay = (ay / d) * SEEK_ACCEL;
     } else {
@@ -258,7 +258,7 @@ export const step = (dt) => {
         const t = targets[teami];
         ax = t.x - xi;
         ay = t.y - yi;
-        const d = Math.hypot(ax, ay);
+        const d = mag(ax, ay);
         d > 0.001 && (ax = (ax / d) * SEEK_ACCEL, ay = (ay / d) * SEEK_ACCEL);
       }
     }
@@ -266,7 +266,7 @@ export const step = (dt) => {
     ay += sy * SEP_ACCEL;
 
     // Shoreline avoidance: steer back if open water lies just ahead.
-    const curSp = Math.hypot(U.vx[i], U.vy[i]);
+    const curSp = mag(U.vx[i], U.vy[i]);
     if (curSp > 1) {
       const inv = 1 / curSp;
       const hx = U.vx[i] * inv;
@@ -279,7 +279,7 @@ export const step = (dt) => {
     let nvy = (U.vy[i] + ay * dt) * DAMPING;
     const baseSp = TYPE_SPEED[typei];
     const maxSp = statei === ROUTING ? baseSp * FLEE_SPEED_MULT : baseSp;
-    let sp = Math.hypot(nvx, nvy);
+    let sp = mag(nvx, nvy);
     sp > maxSp && (nvx *= maxSp / sp, nvy *= maxSp / sp, sp = maxSp);
     U.vx[i] = nvx;
     U.vy[i] = nvy;
