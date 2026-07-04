@@ -1,0 +1,16 @@
+{
+  "name": "fray",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "A lightweight, dependency-free browser war/battle simulator set in ~1450 Europe.",
+  "scripts": {
+    "serve": "python3 -m http.server 8080",
+    "analyze": "fallow",
+    "audit": "fallow audit",
+    "dead-code": "fallow dead-code"
+  },
+  "devDependencies": {
+    "fallow": "2.104.0"
+  }
+}

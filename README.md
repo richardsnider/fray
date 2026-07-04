@@ -9,11 +9,15 @@ ES modules must be served over HTTP (opening `index.html` via `file://` won't
 load the modules). From the repo root:
 
 ```sh
-python3 -m http.server 8080
+python3 -m http.server 8080   # or: npm run serve
 # then open http://localhost:8080
 ```
 
 Any static server works.
+
+## Development
+
+The game itself has **zero runtime dependencies**. See package.json for dev scripts.
 
 ## Current state: vertical slice
 
@@ -63,6 +67,8 @@ src/
     renderer.js      Canvas drawing (terrain blit + culled units)
   input/
     input.js         player command layer
+  util/
+    math.js          shared pure helpers (lerp, clamp, clamp01, clampIndex)
 ```
 
 **Code style — data-oriented & functional.** There are no classes. Each module
