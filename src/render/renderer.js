@@ -12,7 +12,7 @@ import * as U from '../sim/units.js';
 import * as T from '../sim/terrain.js';
 import { viewWorldW, viewWorldH } from './camera.js';
 import { lerp, clamp, clamp01 } from '../util/math.js';
-import { TEAM_COLORS, UNIT_TYPE_COUNT, WORLD_W, WORLD_H, WATER_LEVEL } from '../config.js';
+import { MAX_UNITS, TEAM_COLORS, UNIT_TYPE_COUNT, WORLD_W, WORLD_H, WATER_LEVEL } from '../config.js';
 
 const TERRAIN_SCALE = 0.75; // bake resolution; higher = crisper (esp. zoomed). One-time cost.
 const HILLSHADE = 7;       // strength of slope shading
@@ -38,6 +38,14 @@ const TYPE_SCALE = [1.8, 0.9, 1.2];        // dot size multiplier
 
 const clamp255 = (v) => clamp(v, 0, 255) | 0;
 
+// One draw bucket per (team, type, routing) combination.
+const BIN_COUNT = TEAM_COLORS.length * UNIT_TYPE_COUNT * 2;
+
+// Per-bucket screen positions, refilled each frame as interleaved (x, y) pairs.
+// Int16 holds any screen coordinate and truncates like the old `sx | 0`.
+const createBins = () =>
+  Array.from({ length: BIN_COUNT }, () => new Int16Array(MAX_UNITS * 2));
+
 // Fill styles: [team][type][active|routing]. Routing dots dim to 45% so broken
 // units read at a glance.
 const buildStyles = () => TEAM_COLORS.map((c) =>
@@ -56,7 +64,10 @@ const buildStyles = () => TEAM_COLORS.map((c) =>
 export const create = (canvas) => {
   const ctx = canvas.getContext('2d', { alpha: false });
   ctx.imageSmoothingEnabled = false; // crisp pixel scaling
-  const r = { canvas, ctx, width: 0, height: 0, styles: buildStyles(), terrain: null };
+  const r = {
+    canvas, ctx, width: 0, height: 0, styles: buildStyles(), terrain: null,
+    bins: createBins(), binN: new Int32Array(BIN_COUNT),
+  };
   buildTerrain(r);
   resize(r);
   return r;
@@ -167,25 +178,37 @@ export const render = (r, alpha, cam) => {
   const camX = cam.x;
   const camY = cam.y;
 
-  // Bucket by team → type → routing so fillStyle and dot size are set once per
-  // group rather than per unit.
+  // One pass bins each visible unit's screen position by (team, type, routing);
+  // each bin then draws with fillStyle and dot size set once. Bins are emitted
+  // in the same nested order the old 12 filter passes used, so the output is
+  // pixel-identical at 1/12th the iteration.
+  const { bins, binN } = r;
+  binN.fill(0);
+  for (let i = 0; i < count; i++) {
+    const wx = U.px[i] + (U.x[i] - U.px[i]) * alpha;
+    const sx = (wx - camX) * zoom;
+    if (sx < 0 || sx >= w) continue;
+    const wy = U.py[i] + (U.y[i] - U.py[i]) * alpha;
+    const sy = (wy - camY) * zoom;
+    if (sy < 0 || sy >= h) continue;
+    const b = (U.team[i] * UNIT_TYPE_COUNT + U.type[i]) * 2 + (U.state[i] === ROUTING ? 1 : 0);
+    const bin = bins[b];
+    const n = binN[b];
+    bin[n] = sx;
+    bin[n + 1] = sy;
+    binN[b] = n + 2;
+  }
+
   for (let team = 0; team < r.styles.length; team++) {
     for (let type = 0; type < UNIT_TYPE_COUNT; type++) {
       const dot = Math.max(1, Math.round(1.5 * TYPE_SCALE[type] * zoom));
       for (let routing = 0; routing < 2; routing++) {
+        const b = (team * UNIT_TYPE_COUNT + type) * 2 + routing;
+        const n = binN[b];
+        if (n === 0) continue;
         ctx.fillStyle = r.styles[team][type][routing];
-        const wantRouting = routing === 1;
-        for (let i = 0; i < count; i++) {
-          if (U.team[i] !== team || U.type[i] !== type) continue;
-          if ((U.state[i] === ROUTING) !== wantRouting) continue;
-          const wx = U.px[i] + (U.x[i] - U.px[i]) * alpha;
-          const wy = U.py[i] + (U.y[i] - U.py[i]) * alpha;
-          const sx = (wx - camX) * zoom;
-          if (sx < 0 || sx >= w) continue;
-          const sy = (wy - camY) * zoom;
-          if (sy < 0 || sy >= h) continue;
-          ctx.fillRect(sx | 0, sy | 0, dot, dot);
-        }
+        const bin = bins[b];
+        for (let k = 0; k < n; k += 2) ctx.fillRect(bin[k], bin[k + 1], dot, dot);
       }
     }
   }
