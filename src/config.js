@@ -87,6 +87,13 @@ export const CHARGE_COOLDOWN = 3.0;     // seconds before a horse can charge aga
 //                          KNIGHT ARCHER PIKE
 export const ARMY_MIX = [0.20, 0.30, 0.50];
 
+// Deployment: each army spawns as clustered squads of a single type (a block of
+// pike, a body of archers, a squadron of horse) rather than one intermixed soup,
+// so formations read as coherent groups. A squad is ~SQUAD_SIZE units scattered
+// in a SQUAD_RADIUS disk around a random deploy point in the army's zone.
+export const SQUAD_SIZE = 300;          // units per single-type cluster
+export const SQUAD_RADIUS = 70;         // world-unit radius a squad scatters over
+
 // Morale / routing. Morale is 0..MORALE_MAX; below ROUT it breaks, and a broken
 // unit must recover past RALLY to re-form.
 export const MORALE_MAX = 100;

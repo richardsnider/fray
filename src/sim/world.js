@@ -16,7 +16,8 @@ import {
   FEAR_OUTNUMBERED, FEAR_PANIC, HIT_FEAR,
   SLOPE_SPEED, COVER_SLOW, HEIGHT_DMG, WATER_LOOK, WATER_AVOID,
   FLOW_CELL, FLOW_UPDATE_TICKS,
-  UnitType, ARMY_MIX, TYPE_SPEED, TYPE_MELEE_DPS, TYPE_ARMOR, DMG_MULT,
+  UnitType, UNIT_TYPE_COUNT, ARMY_MIX, SQUAD_SIZE, SQUAD_RADIUS,
+  TYPE_SPEED, TYPE_MELEE_DPS, TYPE_ARMOR, DMG_MULT,
   CHARGE_MIN_SPEED, CHARGE_DMG, CHARGE_MORALE, CHARGE_COOLDOWN,
 } from '../config.js';
 
@@ -87,27 +88,42 @@ const spawnArmies = () => {
   spawnArmy(W * 0.76, W * 0.94, 1);
 };
 
+// Deploy an army into its zone [x0,x1] x [y0,y1] as clustered single-type
+// squads, so each type reads as a coherent group instead of an intermixed soup.
+// Per-type counts follow ARMY_MIX; the last type absorbs any rounding remainder
+// so the total stays exactly ARMY_SIZE.
 const spawnArmy = (x0, x1, team) => {
-  for (let i = 0; i < ARMY_SIZE; i++) {
-    let x, y, tries = 0;
-    // Reject spots that landed in water so nobody spawns stranded.
-    do {
-      x = rand(x0, x1);
-      y = rand(H * 0.2, H * 0.8);
-    } while (T.isWaterAt(x, y) && ++tries < 20);
-    U.spawn(x, y, team, pickType());
+  const y0 = H * 0.2, y1 = H * 0.8;
+  let placed = 0;
+  for (let t = 0; t < UNIT_TYPE_COUNT; t++) {
+    const count = t === UNIT_TYPE_COUNT - 1
+      ? ARMY_SIZE - placed
+      : Math.round(ARMY_SIZE * ARMY_MIX[t]);
+    for (let n = count; n > 0; n -= SQUAD_SIZE) {
+      spawnSquad(x0, x1, y0, y1, team, t, Math.min(SQUAD_SIZE, n));
+    }
+    placed += count;
   }
 };
 
-// Draw a unit type from the army composition weights.
-const pickType = () => {
-  const r = rng();
-  let acc = 0;
-  for (let t = 0; t < ARMY_MIX.length; t++) {
-    acc += ARMY_MIX[t];
-    if (r < acc) return t; // early return: genuine control flow
+// Scatter n units of one type in a disk around a random deploy point. The center
+// is kept a radius inside the zone so the squad stays within its army's area.
+const spawnSquad = (x0, x1, y0, y1, team, type, n) => {
+  const r = SQUAD_RADIUS;
+  const cx = rand(Math.min(x0 + r, x1), Math.max(x1 - r, x0));
+  const cy = rand(Math.min(y0 + r, y1), Math.max(y1 - r, y0));
+  for (let i = 0; i < n; i++) {
+    let x = cx, y = cy, tries = 0;
+    // Uniform-in-disk offset; reject water so nobody spawns stranded, falling
+    // back to the squad center after a few tries.
+    do {
+      const ang = rng() * Math.PI * 2;
+      const rad = Math.sqrt(rng()) * r;
+      x = cx + Math.cos(ang) * rad;
+      y = cy + Math.sin(ang) * rad;
+    } while (T.isWaterAt(x, y) && ++tries < 8);
+    U.spawn(x, y, team, type);
   }
-  return ARMY_MIX.length - 1;
 };
 
 const rand = (a, b) => a + rng() * (b - a);
