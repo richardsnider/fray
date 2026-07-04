@@ -66,6 +66,13 @@ const SELECT_BOX_LINE = 'rgba(150,255,185,0.75)';
 const BLOOD_A = 'rgb(86,18,14)';
 const BLOOD_B = 'rgb(58,12,10)';
 
+// Rally-flag overlay: one small pennant on a pole marks each squad's objective,
+// with its code name tagged below. Team color fills the pennant; the pole,
+// outline, and label rim are the same near-black used on the sprites.
+const FLAG_DARK = 'rgb(10,8,10)';
+const FLAG_LABEL = 'rgb(232,230,236)';
+const teamRgb = (team) => `rgb(${TEAM_COLORS[team][0]},${TEAM_COLORS[team][1]},${TEAM_COLORS[team][2]})`;
+
 const clamp255 = (v) => clamp(v, 0, 255) | 0;
 
 const KNIGHT = UnitType.KNIGHT;
@@ -383,6 +390,51 @@ const drawArrows = (r, alpha, cam) => {
   }
 };
 
+// Rally flags, drawn straight from the sim's rally list — a handful per battle,
+// so a per-frame path (no baked sprites) stays cheap. The pole base sits on the
+// world-space rally point; the squad's code name is stamped just below it.
+const drawRallies = (r, cam) => {
+  const rallies = world.getRallies();
+  if (!rallies.length) return;
+  const ctx = r.ctx;
+  const zoom = cam.zoom;
+  const w = r.width, h = r.height;
+  // "px" is the flag's pixel unit: scales with zoom but stays legible far out.
+  const px = Math.max(2, Math.round(zoom * 0.5));
+  const poleW = Math.max(1, Math.round(px * 0.7));
+  const poleH = px * 7;
+  const flagW = px * 5, flagH = px * 3;
+  const ol = Math.max(1, px >> 1); // pennant/label outline thickness
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'top';
+  ctx.font = `${px * 5}px monospace`;
+  ctx.lineWidth = ol * 2;
+  ctx.lineJoin = 'round';
+  for (const ral of rallies) {
+    const sx = (ral.x - cam.x) * zoom;
+    if (sx < -flagW || sx >= w + flagW) continue;
+    const sy = (ral.y - cam.y) * zoom;
+    if (sy < -poleH || sy >= h + poleH) continue;
+    const bx = sx | 0, by = sy | 0;   // pole base == rally point
+    const topY = by - poleH;
+    // Pole plus a little base foot so it reads as planted in the ground.
+    ctx.fillStyle = FLAG_DARK;
+    ctx.fillRect(bx, topY, poleW, poleH);
+    ctx.fillRect(bx - poleW, by - poleW, poleW * 3, poleW);
+    // Pennant: team-color rect with a dark rim, hung at the top of the pole.
+    const fx = bx + poleW;
+    ctx.fillRect(fx - ol, topY - ol, flagW + 2 * ol, flagH + 2 * ol);
+    ctx.fillStyle = teamRgb(ral.team);
+    ctx.fillRect(fx, topY, flagW, flagH);
+    // Code-name label, centered under the pole with a dark rim for legibility.
+    const ly = by + poleW + ol;
+    ctx.strokeStyle = FLAG_DARK;
+    ctx.fillStyle = FLAG_LABEL;
+    ctx.strokeText(ral.label, bx, ly);
+    ctx.fillText(ral.label, bx, ly);
+  }
+};
+
 export const render = (r, alpha, cam, selBox = null) => {
   const ctx = r.ctx;
   const w = r.width;
@@ -456,7 +508,8 @@ export const render = (r, alpha, cam, selBox = null) => {
     for (let k = 0; k < n; k += 2) ctx.drawImage(c, bin[k] - ax, bin[k + 1] - ay);
   }
 
-  // --- overlays: volleys in the air, the selection box, then the vignette ------
+  // --- overlays: rally flags, volleys in the air, the selection box, vignette --
+  drawRallies(r, cam);
   drawArrows(r, alpha, cam);
   if (selBox) {
     const bx = Math.min(selBox.x0, selBox.x1), by = Math.min(selBox.y0, selBox.y1);

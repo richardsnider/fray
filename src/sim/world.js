@@ -45,6 +45,12 @@ const stats = { team0: 0, team1: 0 };
 // reproduces the whole battle. Decorrelated from the terrain seed via XOR.
 let rng = Math.random;
 
+// One entry per spawned squad: the world-space rally point it marches to, its
+// team, and a short per-team code name ("a", "b", …) for the flag overlay.
+const rallies = [];
+const rallyLabelN = [0, 0]; // next label index per team, reset each init
+export const getRallies = () => rallies;
+
 export const init = (seed = 0) => {
   rng = mulberry32((seed ^ 0x9e3779b9) >>> 0);
   T.generate(seed);
@@ -53,6 +59,8 @@ export const init = (seed = 0) => {
   tick = 0;
   playerTarget = null;
   deaths.n = 0;
+  rallies.length = 0;
+  rallyLabelN[0] = rallyLabelN[1] = 0;
   U.reset();
   spawnArmies();
 };
@@ -139,6 +147,9 @@ const spawnSquad = (x0, x1, y0, y1, team, type, n) => {
   // Rally on the far side: team 0 (deploys left) heads right, team 1 vice-versa.
   const rx = team === 0 ? rand(W * 0.55, W * 0.92) : rand(W * 0.08, W * 0.45);
   const ry = rand(H * 0.1, H * 0.9);
+  // Record it for the flag overlay, tagged with a short per-team code name.
+  const label = String.fromCharCode(97 + rallyLabelN[team]++);
+  rallies.push({ x: rx, y: ry, team, label });
   for (let i = 0; i < n; i++) {
     let x = cx, y = cy, tries = 0;
     // Uniform-in-disk offset; reject water so nobody spawns stranded, falling
