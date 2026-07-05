@@ -20,6 +20,7 @@ import * as T from '../sim/terrain.js';
 import * as world from '../sim/world.js';
 import { FLIGHT_TICKS } from '../sim/archery.js';
 import { viewWorldW, viewWorldH } from './camera.js';
+import { flagMetrics } from './flag.js';
 import { lerp, clamp, clamp01, smoothstep, mag } from '../util/math.js';
 import {
   MAX_UNITS, TEAM_COLORS, UNIT_TYPE_COUNT, UnitType, WORLD_W, WORLD_H, WATER_LEVEL, AIM_CELL,
@@ -439,12 +440,7 @@ const drawRallies = (r, cam) => {
   const ctx = r.ctx;
   const zoom = cam.zoom;
   const w = r.width, h = r.height;
-  // "px" is the flag's pixel unit: scales with zoom but stays legible far out.
-  const px = Math.max(2, Math.round(zoom * 0.5));
-  const poleW = Math.max(1, Math.round(px * 0.7));
-  const poleH = px * 7;
-  const flagW = px * 5, flagH = px * 3;
-  const ol = Math.max(1, px >> 1); // pennant/label outline thickness
+  const { px, poleW, poleH, flagW, flagH, ol } = flagMetrics(zoom);
   ctx.textAlign = 'center';
   ctx.textBaseline = 'top';
   ctx.font = `${px * 5}px monospace`;

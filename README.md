@@ -76,6 +76,7 @@ src/
   render/
     camera.js        viewport: world<->screen transform, pan/zoom, clamping
     renderer.js      Canvas drawing (terrain blit + culled units)
+    flag.js          rally-flag geometry shared by drawing + click hit-testing
   input/
     input.js         player command layer
   util/

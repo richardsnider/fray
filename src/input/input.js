@@ -9,6 +9,7 @@
 // createInput() wires the DOM listeners and returns { update, getSelectionBox }.
 
 import * as Camera from '../render/camera.js';
+import { flagMetrics } from '../render/flag.js';
 
 const PAN_KEYS_SPEED = 450; // world units/sec at zoom 1
 const ZOOM_STEP = 1.01;     // multiplicative zoom per wheel notch (closer to 1 = slower)
@@ -30,13 +31,13 @@ export const create = (canvas, cam, world) => {
   };
 
   // Hit-test the click (device px) against friendly rally flags, returning the
-  // id of the topmost one struck or -1. The clickable box mirrors the renderer's
-  // flag geometry (pole + pennant, sized off zoom), grown a little for slop.
+  // id of the topmost one struck or -1. The clickable box is the drawn flag's
+  // own geometry (pole + pennant, shared via flagMetrics), grown a little for slop.
   const pickRally = (mx, my) => {
     const rallies = world.getRallies();
     const zoom = cam.zoom;
-    const u = Math.max(2, Math.round(zoom * 0.5)); // renderer's flag pixel unit
-    const poleH = u * 7, flagW = u * 5, pad = u * 2;
+    const { px, poleH, flagW } = flagMetrics(zoom);
+    const pad = px * 2;
     for (let k = rallies.length - 1; k >= 0; k--) {
       const r = rallies[k];
       if (r.team !== 0) continue;
