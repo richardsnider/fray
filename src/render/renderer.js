@@ -1,7 +1,7 @@
 // Canvas 2D renderer. Terrain is baked once into an offscreen world-sized canvas
 // and blitted per-frame with a source-rect that follows the camera (the browser
 // does the zoom scaling, GPU-accelerated). Units are pre-baked sprite stamps
-// (pikes squares, archers diamonds, knights a horse-and-rider silhouette),
+// (pikes squares, archers a square under a bow arc, knights an overhead horse),
 // transformed to screen space, culled, and drawn with one drawImage each.
 //
 // The split is: the bake may be expensive (fine noise octaves, ordered
@@ -50,13 +50,14 @@ const BAYER4 = [0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5];
 
 const ROUTING = U.STATE.ROUTING;
 
-// Per-type look: archers and pikes wear the plain team color — shape (diamond
-// vs square) tells them apart — while knights get a slight white-lifted accent.
+// Per-type look: archers and pikes wear the plain team color — the archer's
+// bow arc tells them apart from a bare pike — while knights get a slight
+// white-lifted accent.
 //                     KNIGHT              ARCHER               PIKE
 const TYPE_ACCENT = [[255, 255, 255],   [0, 0, 0],           [0, 0, 0]];
 const TYPE_ACCENT_K = [0.16, 0.0, 0.0];    // blend toward accent
 const TYPE_BRIGHT = [1.12, 1.0, 1.0];      // brightness multiplier
-const TYPE_SCALE = [1.4, 0.9, 1.2];        // base dot size multiplier (the knight's horse spans 1.6×1.35 dots)
+const TYPE_SCALE = [1.4, 0.9, 1.2];        // base dot size multiplier (the knight's horse spans 1.7×0.85 dots)
 
 const OUTLINE_STYLE = 'rgb(10,8,10)';      // near-black rim baked into sprites so units pop off any ground
 const ARROW_STYLE = 'rgb(216,204,170)';    // pale ash shafts read against the dark ground
@@ -107,72 +108,111 @@ const buildStyles = () => TEAM_COLORS.map((c) =>
 // --- unit sprites ------------------------------------------------------------
 // Every unit is a sprite stamp baked per (team, type, routing, facing) at the
 // current zoom, outline included, so the per-frame cost is one drawImage per
-// unit. Knights get a horse-and-rider silhouette with four facings picked from
-// velocity; archers a diamond; pikes the plain square.
+// unit. Knights get an overhead-horse silhouette with four facings picked from
+// velocity; archers a square with a bow arc above; pikes the plain square.
 
-// Horse-and-rider silhouette (facing right) as rects in units of the knight's
-// dot size: body, neck+head, rider, rear leg, front leg. Head/rider hang below
-// the body bar — the small leg nubs merge into the baked outline, so the big
-// bumps have to be the ones pointing down for the shape to read as an animal.
-const HORSE_RECTS = [
-  [0.0, 0.3, 1.6, 0.55],   // Body
-  [0.0, 0.7, 0.35, 0.55],  // Neck + head (moved to the left)
-  [0.75, 0.8, 0.4, 0.5],   // Rider
-  [1.2, 0.0, 0.25, 0.3],   // Rear leg (swapped position)
-  [0.15, 0.0, 0.25, 0.3],  // Front leg (swapped position)
-];
-const HORSE_W = 1.6, HORSE_H = 1.35; // silhouette extents, in dots
+// Overhead horse: the mount seen from directly above (legs tucked under the
+// body, out of sight). A rounded-rect body carries a small head blob poking
+// past the front and a thin tail trailing the back. Baked facing right (head
+// toward +x); the other facings mirror/transpose the mask so every stamp stays
+// pixel-crisp. Extents in dots: HORSE_L along the facing axis, HORSE_Wd across.
+const HORSE_L = 1.7, HORSE_Wd = 0.85;
 
-// Map a right-facing rect into the given facing: mirror for left, transpose
-// for down, transpose + mirror for up.
-const faceRect = ([x, y, w, h], facing) =>
-  facing === 0 ? [x, y, w, h]
-    : facing === 1 ? [HORSE_W - x - w, y, w, h]
-    : facing === 2 ? [y, x, h, w]
-    : [y, HORSE_W - x - w, h, w];
-
-// Fill `rects` (in dot units) scaled by s at a `pad` inset, each side inflated
-// by `inflate` px — the outline pass re-fills the same silhouette inflated.
-const fillRects = (g, rects, s, pad, inflate) => {
-  for (const [x, y, w, h] of rects) {
-    const x0 = Math.round(x * s), y0 = Math.round(y * s);
-    const pw = Math.max(1, Math.round((x + w) * s) - x0);
-    const ph = Math.max(1, Math.round((y + h) * s) - y0);
-    g.fillRect(pad + x0 - inflate, pad + y0 - inflate, pw + 2 * inflate, ph + 2 * inflate);
-  }
+// Rasterize the right-facing silhouette into a W×H byte mask (1 = filled).
+const horseMask = (s) => {
+  const W = Math.max(4, Math.round(HORSE_L * s));
+  const H = Math.max(3, Math.round(HORSE_Wd * s));
+  const m = new Uint8Array(W * H);
+  // Fill an axis-aligned rounded rect [x0,x1)×[y0,y1) with corner radius r.
+  const roundRect = (x0, y0, x1, y1, r) => {
+    for (let y = y0; y < y1; y++) {
+      for (let x = x0; x < x1; x++) {
+        const dx = x < x0 + r ? x0 + r - x : x >= x1 - r ? x - (x1 - 1 - r) : 0;
+        const dy = y < y0 + r ? y0 + r - y : y >= y1 - r ? y - (y1 - 1 - r) : 0;
+        if (dx * dx + dy * dy <= r * r) m[y * W + x] = 1;
+      }
+    }
+  };
+  const bx0 = Math.round(0.16 * W), bx1 = Math.round(0.74 * W);
+  roundRect(bx0, 0, bx1, H, Math.round(0.4 * H));                                     // body
+  const hy0 = Math.round(0.26 * H), hy1 = Math.round(0.74 * H);
+  roundRect(bx1 - Math.round(0.04 * W), hy0, W, hy1, Math.round(0.45 * (hy1 - hy0))); // head
+  const ty0 = Math.round(0.43 * H), ty1 = Math.max(ty0 + 1, Math.round(0.57 * H));
+  for (let y = ty0; y < ty1; y++) for (let x = 0; x < bx0; x++) m[y * W + x] = 1;     // tail
+  return { W, H, m };
 };
 
-// Pixel-row diamond: crisp at any size, no path antialiasing.
-const fillDiamond = (g, x0, y0, size) => {
-  for (let row = 0; row < size; row++) {
-    const dy = Math.abs(row + 0.5 - size / 2);
-    const w = Math.max(1, Math.round(size - 2 * dy));
-    g.fillRect(x0 + ((size - w) >> 1), y0 + row, w, 1);
+// Reorient the right-facing mask for facing f (0 right, 1 left, 2 down, 3 up).
+// Mirror (left) and 90° transpose (down/up) are exact pixel ops — no blur.
+const orientMask = ({ W, H, m }, f) => {
+  if (f === 0) return { W, H, m };
+  if (f === 1) {
+    const o = new Uint8Array(W * H);
+    for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) o[y * W + x] = m[y * W + (W - 1 - x)];
+    return { W, H, m: o };
   }
+  const oW = H, oH = W, o = new Uint8Array(oW * oH);
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+    const nx = f === 2 ? H - 1 - y : y;   // down: head → +y (screen bottom); up: head → -y
+    const ny = f === 2 ? x : W - 1 - x;
+    o[ny * oW + nx] = m[y * W + x];
+  }
+  return { W: oW, H: oH, m: o };
+};
+
+// Upper-half ring (the archer's bow): fill pixels whose distance from (cx,cy)
+// lies in [rIn,rOut], top half only (y ≤ cy) — a crisp pixel-tested arc, no
+// path antialiasing.
+const fillArc = (g, cx, cy, rIn, rOut) => {
+  const ri2 = rIn > 0 ? rIn * rIn : 0, ro2 = rOut * rOut;
+  for (let y = -rOut; y <= 0; y++)
+    for (let x = -rOut; x <= rOut; x++) {
+      const d = x * x + y * y;
+      if (d >= ri2 && d <= ro2) g.fillRect(cx + x, cy + y, 1, 1);
+    }
 };
 
 const bakeSprite = (style, type, s, o, facing) => {
   const c = document.createElement('canvas');
   if (type === KNIGHT) {
-    const rects = HORSE_RECTS.map((rc) => faceRect(rc, facing));
-    c.width = Math.ceil((facing < 2 ? HORSE_W : HORSE_H) * s) + 2 * o;
-    c.height = Math.ceil((facing < 2 ? HORSE_H : HORSE_W) * s) + 2 * o;
+    const { W, H, m } = orientMask(horseMask(s), facing);
+    c.width = W + 2 * o;
+    c.height = H + 2 * o;
     const g = c.getContext('2d');
-    o && (g.fillStyle = OUTLINE_STYLE, fillRects(g, rects, s, o, o));
+    // Dilate-then-fill: stamp each filled pixel as an o-inflated block in the
+    // rim color first, then the 1px fill on top, leaving an o-thick outline.
+    if (o) {
+      g.fillStyle = OUTLINE_STYLE;
+      for (let y = 0; y < H; y++) for (let x = 0; x < W; x++)
+        if (m[y * W + x]) g.fillRect(x, y, 1 + 2 * o, 1 + 2 * o);
+    }
     g.fillStyle = style;
-    fillRects(g, rects, s, o, 0);
+    for (let y = 0; y < H; y++) for (let x = 0; x < W; x++)
+      if (m[y * W + x]) g.fillRect(x + o, y + o, 1, 1);
+  } else if (type === UnitType.ARCHER) {
+    // A pike's square with a bow arc floating just above it. The square keeps
+    // the shared footprint (anchored on the unit); the bow only adds headroom.
+    const box = s + 2 * o;
+    const R = Math.max(2, Math.round(s * 0.55));   // bow radius
+    const t = Math.max(1, Math.round(s * 0.18));   // stave thickness
+    const gap = Math.max(1, o);                    // clearance above the square
+    const cy = R + o, sqTop = cy + gap;
+    c.height = sqTop + box;
+    c.width = Math.max(box, 2 * (R + o) + 1);
+    const g = c.getContext('2d');
+    const cx = c.width >> 1, sqLeft = (c.width - box) >> 1;
+    if (o) g.fillStyle = OUTLINE_STYLE, fillArc(g, cx, cy, R - t - o, R + o), g.fillRect(sqLeft, sqTop, box, box);
+    g.fillStyle = style;
+    fillArc(g, cx, cy, R - t, R);
+    g.fillRect(sqLeft + o, sqTop + o, s, s);
+    // Anchor on the square center so the bow reads as floating above the unit.
+    return { c, ax: cx, ay: sqTop + (box >> 1) };
   } else {
     c.width = c.height = s + 2 * o;
     const g = c.getContext('2d');
-    if (type === UnitType.ARCHER) {
-      o && (g.fillStyle = OUTLINE_STYLE, fillDiamond(g, 0, 0, s + 2 * o));
-      g.fillStyle = style;
-      fillDiamond(g, o, o, s);
-    } else {
-      o && (g.fillStyle = OUTLINE_STYLE, g.fillRect(0, 0, s + 2 * o, s + 2 * o));
-      g.fillStyle = style;
-      g.fillRect(o, o, s, s);
-    }
+    o && (g.fillStyle = OUTLINE_STYLE, g.fillRect(0, 0, s + 2 * o, s + 2 * o));
+    g.fillStyle = style;
+    g.fillRect(o, o, s, s);
   }
   // Anchor at the sprite center so stamps stay put as zoom re-bakes them.
   return { c, ax: c.width >> 1, ay: c.height >> 1 };
