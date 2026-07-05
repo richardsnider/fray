@@ -94,6 +94,14 @@ export const init = (seed = 0) => {
 // Player command + selection API. Called by the input layer, which receives
 // `world` via dependency injection — so static analysis can't see the edges.
 
+// Shared scan predicates. `liveOwn` is a unit the player owns and can still act
+// on — team 0 and not dead (dead units are compacted out each tick but can
+// linger mid-step); `liveSelected` narrows that to the current selection (only
+// team-0 units are ever selected, so the team check is redundant-but-safe). Every
+// selection/command/HUD loop below filters through one of these.
+const liveOwn = (i) => U.team[i] === 0 && U.state[i] !== DEAD;
+const liveSelected = (i) => liveOwn(i) && U.selected[i] === 1;
+
 // Select every live team-0 unit inside the world-space rectangle, replacing the
 // previous selection. An empty box (a bare click) clears the selection.
 // fallow-ignore-next-line unused-export
@@ -101,7 +109,7 @@ export const selectInRect = (x0, y0, x1, y1) => {
   const xlo = Math.min(x0, x1), xhi = Math.max(x0, x1);
   const ylo = Math.min(y0, y1), yhi = Math.max(y0, y1);
   for (let i = 0; i < U.count; i++) {
-    const hit = U.team[i] === 0 && U.state[i] !== DEAD &&
+    const hit = liveOwn(i) &&
       U.x[i] >= xlo && U.x[i] <= xhi && U.y[i] >= ylo && U.y[i] <= yhi;
     U.selected[i] = hit ? 1 : 0;
   }
@@ -113,7 +121,7 @@ export const selectInRect = (x0, y0, x1, y1) => {
 // fallow-ignore-next-line unused-export
 export const selectByRally = (id) => {
   for (let i = 0; i < U.count; i++)
-    U.selected[i] = (U.team[i] === 0 && U.state[i] !== DEAD && U.rallyId[i] === id) ? 1 : 0;
+    U.selected[i] = (liveOwn(i) && U.rallyId[i] === id) ? 1 : 0;
   commandRally = id; // remember the flag this selection was grabbed from
 };
 
@@ -125,8 +133,7 @@ export const selectByRally = (id) => {
 // fallow-ignore-next-line unused-export
 export const commandSelected = (x, y) => {
   let anySel = false;
-  for (let i = 0; i < U.count && !anySel; i++)
-    anySel = U.team[i] === 0 && U.state[i] !== DEAD && U.selected[i] === 1;
+  for (let i = 0; i < U.count && !anySel; i++) anySel = liveSelected(i);
   if (!anySel) return;
 
   // Reuse the flag the selection came from if it still exists, else mint one;
@@ -137,7 +144,7 @@ export const commandSelected = (x, y) => {
   const ral = rallyById(targetId);
   ral.x = x; ral.y = y;
   for (let i = 0; i < U.count; i++) {
-    if (U.team[i] === 0 && U.state[i] !== DEAD && U.selected[i]) {
+    if (liveSelected(i)) {
       U.rallyId[i] = targetId;
       U.rallyX[i] = x; U.rallyY[i] = y;
     }
@@ -151,7 +158,7 @@ const selCounts = { knight: 0, archer: 0, pike: 0, total: 0 };
 export const getSelectionCounts = () => {
   selCounts.knight = selCounts.archer = selCounts.pike = selCounts.total = 0;
   for (let i = 0; i < U.count; i++) {
-    if (!U.selected[i] || U.state[i] === DEAD) continue;
+    if (!liveSelected(i)) continue;
     selCounts.total++;
     const t = U.type[i];
     t === KNIGHT ? selCounts.knight++ : t === PIKE ? selCounts.pike++ : selCounts.archer++;
