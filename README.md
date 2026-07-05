@@ -26,7 +26,8 @@ The game itself has **zero runtime dependencies**. See package.json for dev scri
   a future WebGL renderer.
 - Uniform spatial-hash grid (`src/sim/spatialGrid.js`) for O(1)-ish neighbor
   queries.
-- Boids-style steering: seek objective + friend-only separation (`src/sim/world.js`).
+- Boids-style steering: seek a per-unit rally point + friend-only separation,
+  with reactive shoreline avoidance (`src/sim/world.js`).
 - Three unit types — heavy cavalry, longbow archers, pike/melee — with
   data-driven stats, a rock-paper-scissors damage table, and cavalry charges
   (`src/config.js`, `src/sim/world.js`).
@@ -39,19 +40,25 @@ The game itself has **zero runtime dependencies**. See package.json for dev scri
 - Terrain grid (elevation/water/brush) that feeds both the sim and the renderer
   (`src/sim/terrain.js`).
 
-Two armies (silver vs. red) spawn and march into each other on a 3200×2000 world.
-Units in reach trade damage; morale drains from being outnumbered, taking hits,
-and standing near fleeing friends. Below a threshold a unit **routs** (dim dots)
-and runs; if it reaches safety and recovers, it re-forms.
+Two armies (silver vs. red) deploy as clustered single-type squads on a
+3200×2000 world, each squad marching toward its own objective on the enemy's
+half so the battle breaks into several fronts. Units in reach trade damage;
+morale drains from being outnumbered, taking hits, and standing near fleeing
+friends. Below a threshold a unit **routs** (dim dots) and runs; if it reaches
+safety and recovers, it re-forms.
 
 The terrain is real: **water is impassable** (units slide along shorelines),
 **hills slow the climb and speed the descent**, **brush slows movement**, and
-**attacking downhill hits harder**. Marching armies follow a per-team **flow
-field** that routes them *around* water toward the objective — including wherever
-you click. The HUD shows per-team survivors, FPS, zoom, and sim time per frame.
+**attacking downhill hits harder**. Each unit marches toward its own **rally
+point** — its squad's spawn objective, or wherever you last commanded the
+selection it belongs to — steering straight for it while reactively veering off
+any open water ahead. The HUD shows per-team survivors, FPS, zoom, and sim time
+per frame.
 
-**Controls:** left-click orders your (silver) army · right-drag or WASD/arrows pan
-· mouse wheel zooms toward the cursor.
+**Controls:** left-drag box-selects your (silver) units · left-click a rally flag
+grabs its squad · left-click the ground orders the current selection there ·
+right-drag or WASD/arrows pan · mouse wheel zooms toward the cursor · space
+pauses.
 
 ## Architecture
 
@@ -63,10 +70,9 @@ src/
     units.js         SoA typed-array unit store
     spatialGrid.js   linked-list uniform grid
     terrain.js       elevation/water/brush grids + sampling
-    flowField.js     BFS flow-field pathfinding (one field per army)
     archery.js       massed volley fire: beaten-zone aiming + arrow-flight queue
     rng.js           seeded PRNG (mulberry32) so a seed reproduces a battle
-    world.js         steering, combat, morale, terrain integration
+    world.js         steering, combat, morale, rally-point marching, selection
   render/
     camera.js        viewport: world<->screen transform, pan/zoom, clamping
     renderer.js      Canvas drawing (terrain blit + culled units)
@@ -133,16 +139,18 @@ not production.
 ## Roadmap
 
 Done: **combat/morale** ✅ · **camera** ✅ · **terrain effects** ✅ ·
-**flow-field pathfinding** ✅ · **unit types** ✅. Remaining work, in dependency
+**squad rally marching** ✅ · **unit types** ✅. Remaining work, in dependency
 order:
 
 ### 1. AI director — the "plays itself" brain
 
 *Depends on unit types (objectives reference roles).*
 
-- **Groups, not one blob.** Replace "whole team seeks one centroid" with a
-  handful of **groups** per side (spatial clustering or fixed bands), each with
-  its own objective + flow field (we already run N fields cheaply).
+- **Groups, not one blob** — *partly here already.* Armies deploy as single-type
+  squads, each marching to its own rally point, so the "whole team seeks one
+  centroid" blob is already gone. What's left is letting a planner group and
+  regroup those squads under fresh objectives instead of the fixed ones minted at
+  spawn.
 - **Per-side general:** a utility planner that scores candidate objectives
   (engage enemy group, defend, raid village, forage supply, screen a flank,
   besiege) by threat / opportunity / supply, and assigns the best to each group.
@@ -151,8 +159,8 @@ order:
   knob). *Assumption:* the **player's** idle units stay put — only bot generals
   auto-utilize idle troops; the player is exempt.
 - *Assumptions:* coarse objectives (go-to / attack / raid / defend / besiege),
-  not choreography; ~4–12 groups per side to keep planning + flow-fields cheap;
-  planner runs on a fixed cadence with seeded RNG so the sim stays deterministic.
+  not choreography; ~4–12 groups per side to keep planning cheap; planner runs on
+  a fixed cadence with seeded RNG so the sim stays deterministic.
 
 ### 2. Strategic layer — supply · razing · raiding · sieges
 
