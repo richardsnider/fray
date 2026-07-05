@@ -2,12 +2,10 @@
 // position (x, y) and a zoom factor; screen = (world - cam) * zoom. Clamping keeps
 // the view inside the world and stops zooming out past "whole world visible".
 //
-// Input never moves the visible camera directly — it moves a *target* (tx, ty,
-// tzoom). Each frame smooth() eases the visible camera toward that target, so
-// pans and zooms feel weighty instead of snapping. Set CAM_SMOOTH lower for a
-// slower, floatier feel; higher for snappier.
+// Input drives the camera directly: pans and zooms apply the instant they happen
+// and stop the instant input ends — no easing, no inertia, no post-input glide.
 
-import { MAX_ZOOM, CAM_SMOOTH } from '../config.js';
+import { MAX_ZOOM } from '../config.js';
 
 export const create = (worldW, worldH, viewW, viewH) => {
   const cam = {
@@ -15,21 +13,15 @@ export const create = (worldW, worldH, viewW, viewH) => {
     zoom: 1,
     x: (worldW - viewW) / 2, // start centered on the world
     y: (worldH - viewH) / 2,
-    // Target the visible camera eases toward; seeded to the initial view.
-    tzoom: 1, tx: 0, ty: 0,
   };
-  cam.tx = cam.x;
-  cam.ty = cam.y;
-  clampTarget(cam);
-  syncToTarget(cam); // no ease on the first frame — start settled
+  clampCam(cam);
   return cam;
 };
 
 export const setViewport = (cam, viewW, viewH) => {
   cam.viewW = viewW;
   cam.viewH = viewH;
-  clampTarget(cam);
-  clampActual(cam);
+  clampCam(cam);
 };
 
 // Visible extent measured in world units.
@@ -41,37 +33,27 @@ export const screenToWorldY = (cam, sy) => cam.y + sy / cam.zoom;
 
 // Pan by a screen-space delta (e.g. a mouse drag), in the natural direction.
 export const panByScreen = (cam, dx, dy) => {
-  cam.tx -= dx / cam.zoom;
-  cam.ty -= dy / cam.zoom;
-  clampTarget(cam);
+  cam.x -= dx / cam.zoom;
+  cam.y -= dy / cam.zoom;
+  clampCam(cam);
 };
 
 // Pan by a world-space delta (e.g. keyboard, already scaled by dt).
 export const panByWorld = (cam, dx, dy) => {
-  cam.tx += dx;
-  cam.ty += dy;
-  clampTarget(cam);
+  cam.x += dx;
+  cam.y += dy;
+  clampCam(cam);
 };
 
 // Zoom by a multiplicative factor while keeping the world point under the cursor
-// pinned to the same screen pixel (at the target zoom the ease settles into).
+// pinned to the same screen pixel.
 export const zoomAt = (cam, factor, sx, sy) => {
-  const wx = cam.tx + sx / cam.tzoom;
-  const wy = cam.ty + sy / cam.tzoom;
-  cam.tzoom = clampZoom(cam, cam.tzoom * factor);
-  cam.tx = wx - sx / cam.tzoom;
-  cam.ty = wy - sy / cam.tzoom;
-  clampTarget(cam);
-};
-
-// Ease the visible camera toward its target. Frame-rate independent: k is the
-// fraction of the remaining gap closed this frame for the given dt (seconds).
-export const smooth = (cam, dt) => {
-  const k = 1 - Math.exp(-CAM_SMOOTH * dt);
-  cam.zoom += (cam.tzoom - cam.zoom) * k;
-  cam.x += (cam.tx - cam.x) * k;
-  cam.y += (cam.ty - cam.y) * k;
-  clampActual(cam);
+  const wx = cam.x + sx / cam.zoom;
+  const wy = cam.y + sy / cam.zoom;
+  cam.zoom = clampZoom(cam, cam.zoom * factor);
+  cam.x = wx - sx / cam.zoom;
+  cam.y = wy - sy / cam.zoom;
+  clampCam(cam);
 };
 
 const clampZoom = (cam, z) => {
@@ -93,20 +75,8 @@ const clampY = (cam, y, z) => {
   return maxY <= 0 ? 0 : Math.min(Math.max(y, 0), maxY);
 };
 
-const clampTarget = (cam) => {
-  cam.tzoom = clampZoom(cam, cam.tzoom);
-  cam.tx = clampX(cam, cam.tx, cam.tzoom);
-  cam.ty = clampY(cam, cam.ty, cam.tzoom);
-};
-
-const clampActual = (cam) => {
+const clampCam = (cam) => {
   cam.zoom = clampZoom(cam, cam.zoom);
   cam.x = clampX(cam, cam.x, cam.zoom);
   cam.y = clampY(cam, cam.y, cam.zoom);
-};
-
-const syncToTarget = (cam) => {
-  cam.zoom = cam.tzoom;
-  cam.x = cam.tx;
-  cam.y = cam.ty;
 };

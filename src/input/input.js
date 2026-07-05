@@ -10,7 +10,8 @@
 
 import * as Camera from '../render/camera.js';
 
-const PAN_KEYS_SPEED = 900; // world units/sec at zoom 1
+const PAN_KEYS_SPEED = 450; // world units/sec at zoom 1
+const ZOOM_STEP = 1.01;     // multiplicative zoom per wheel notch (closer to 1 = slower)
 const CLICK_SLOP = 6;       // device px of travel below which a left-drag is a click, not a box
 
 export const create = (canvas, cam, world) => {
@@ -100,7 +101,7 @@ export const create = (canvas, cam, world) => {
   canvas.addEventListener('wheel', (e) => {
     e.preventDefault();
     const p = localPos(e);
-    const factor = e.deltaY < 0 ? 1.1 : 1 / 1.1;
+    const factor = e.deltaY < 0 ? ZOOM_STEP : 1 / ZOOM_STEP;
     Camera.zoomAt(cam, factor, p.x, p.y);
   }, { passive: false });
 
@@ -113,8 +114,9 @@ export const create = (canvas, cam, world) => {
   window.addEventListener('keydown', (e) => { !typing(e) && keys.add(e.key.toLowerCase()); });
   window.addEventListener('keyup', (e) => keys.delete(e.key.toLowerCase()));
 
-  // Apply held-key panning and ease the camera toward its target; call once per
-  // rendered frame. dt is in seconds.
+  // Apply held-key panning directly to the camera; call once per rendered frame.
+  // dt is in seconds. Motion tracks the keys exactly and stops on release — no
+  // easing, so there's no glide past the last input.
   const update = (dt) => {
     let dx = 0, dy = 0;
     (keys.has('a') || keys.has('arrowleft')) && (dx -= 1);
@@ -123,7 +125,6 @@ export const create = (canvas, cam, world) => {
     (keys.has('s') || keys.has('arrowdown')) && (dy += 1);
     const speed = PAN_KEYS_SPEED * dt;
     (dx || dy) && Camera.panByWorld(cam, dx * speed, dy * speed);
-    Camera.smooth(cam, dt);
   };
 
   // The in-progress selection rectangle (device px) for the renderer to draw,
