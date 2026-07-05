@@ -16,7 +16,6 @@ import {
   SLOPE_SPEED, COVER_SLOW, HEIGHT_DMG, WATER_LOOK, WATER_AVOID,
   UnitType, UNIT_TYPE_COUNT, ARMY_MIX, SQUAD_SIZE, SQUAD_RADIUS,
   TYPE_SPEED_MULT, TYPE_MELEE_DPS, TYPE_ARMOR, DMG_MULT,
-  CHARGE_MIN_SPEED, CHARGE_DMG, CHARGE_MORALE, CHARGE_COOLDOWN,
 } from '../config.js';
 
 const { ACTIVE, ROUTING, DEAD } = U.STATE;
@@ -265,7 +264,7 @@ export const step = (dt) => {
     const tcx = cellCoord(xi, T.CELL, T.cols);
     const tcy = cellCoord(yi, T.CELL, T.rows);
     const tcell = tcy * T.cols + tcx;
-    U.cooldown[i] > 0 && (U.cooldown[i] -= dt); // archer reload / charge recovery
+    U.cooldown[i] > 0 && (U.cooldown[i] -= dt); // archer reload
 
     // --- neighbor scan: separation (friends), plus enemy/friend awareness -----
     let sx = 0, sy = 0;
@@ -317,14 +316,7 @@ export const step = (dt) => {
       const dh = T.elevation[tcell] - T.elevation[T.cellOf(U.x[ceIdx], U.y[ceIdx])];
       const bonus = clamp(1 + dh * HEIGHT_DMG, 0.5, 1.6);
       // Per-type dps, the rock-paper-scissors matchup, and the target's armor.
-      let hit = TYPE_MELEE_DPS[typei] * dt * bonus * DMG_MULT[typei][tt] * (1 - TYPE_ARMOR[tt]);
-      // Cavalry charge: a ready knight moving fast into contact delivers a burst
-      // plus morale shock — unless the target is a braced pike, which negates it
-      // (this is what makes pike beat cavalry). Then it goes on cooldown.
-      (typei === KNIGHT && tt !== PIKE && U.cooldown[i] <= 0 &&
-        mag(U.vx[i], U.vy[i]) >= CHARGE_MIN_SPEED) &&
-        (hit *= CHARGE_DMG, U.morale[ceIdx] -= CHARGE_MORALE, U.cooldown[i] = CHARGE_COOLDOWN);
-      dmg[ceIdx] += hit;
+      dmg[ceIdx] += TYPE_MELEE_DPS[typei] * dt * bonus * DMG_MULT[typei][tt] * (1 - TYPE_ARMOR[tt]);
       engaged = true;
     }
 

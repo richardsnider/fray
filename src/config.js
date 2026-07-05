@@ -71,14 +71,6 @@ export const AIM_CELL = 32;             // beaten-zone cell size (world units)
 export const ARROW_FLIGHT = 0.8;        // arrow flight time (seconds) before impact
 export const ARCHER_RESCAN = 0.25;      // retry delay when no enemy is in bow range
 
-// Cavalry charge: a transient impact bonus when a fast-moving horse contacts an
-// enemy head-on after a straight run, then a recovery cooldown. Braced pikes
-// (target === PIKE) negate the charge — that is what makes pike > cavalry.
-export const CHARGE_MIN_SPEED = 50;     // must be moving this fast to charge
-export const CHARGE_DMG = 4.5;          // melee-damage multiplier on the impact tick
-export const CHARGE_MORALE = 24;        // morale shock dealt to the struck enemy
-export const CHARGE_COOLDOWN = 3.0;     // seconds before a horse can charge again
-
 // Army composition — fraction of each spawned army by type (must sum to ~1).
 //                          KNIGHT ARCHER PIKE
 export const ARMY_MIX = [0.20, 0.30, 0.50];

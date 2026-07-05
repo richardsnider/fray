@@ -29,7 +29,7 @@ The game itself has **zero runtime dependencies**. See package.json for dev scri
 - Boids-style steering: seek a per-unit rally point + friend-only separation,
   with reactive shoreline avoidance (`src/sim/world.js`).
 - Three unit types — heavy cavalry, longbow archers, pike/melee — with
-  data-driven stats, a rock-paper-scissors damage table, and cavalry charges
+  data-driven stats and a rock-paper-scissors damage table
   (`src/config.js`, `src/sim/world.js`).
 - Massed archery as **area fire** (`src/sim/archery.js`): each volley targets
   the densest enemy cell in bow range (the beaten zone) and lands after a
@@ -198,3 +198,12 @@ order:
   melee your own pikes are winning — belongs to the AI director, not the
   archers; it's a one-line score tweak in `sim/archery.js` when the director
   lands.
+- **Cavalry charges.** An earlier charge mechanic (burst damage + morale shock
+  when a fast-moving knight hit contact, negated by braced pikes) was removed:
+  its raw-velocity trigger never fired after the steering refactor capped
+  stored velocity below the charge threshold, and even before that it only
+  triggered off separation shoves in a packed melee, not an open-field run-up.
+  Pike > cavalry survives via the `DMG_MULT` table. If revived, redesign the
+  trigger around an actual run-up (e.g. ticks spent closing on the target at
+  marching pace or above) rather than instantaneous velocity; the old tuning
+  lives in git history (`585a113` and earlier).
