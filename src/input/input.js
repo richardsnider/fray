@@ -1,6 +1,7 @@
 // Player command + camera control layer.
 //   left-drag          → selection box: pick your (team 0) units inside it
-//   left-click         → order the current selection to a world point
+//   left-click a flag  → select every unit that follows that (friendly) rally
+//   left-click ground  → order the current selection there (moves/mints its flag)
 //   right-drag / MMB   → pan the camera
 //   wheel              → zoom toward the cursor
 //   W/A/S/D or arrows  → pan the camera
@@ -25,6 +26,25 @@ export const create = (canvas, cam, world) => {
     const rect = canvas.getBoundingClientRect();
     const s = canvas.width / rect.width;
     return { x: (e.clientX - rect.left) * s, y: (e.clientY - rect.top) * s };
+  };
+
+  // Hit-test the click (device px) against friendly rally flags, returning the
+  // id of the topmost one struck or -1. The clickable box mirrors the renderer's
+  // flag geometry (pole + pennant, sized off zoom), grown a little for slop.
+  const pickRally = (mx, my) => {
+    const rallies = world.getRallies();
+    const zoom = cam.zoom;
+    const u = Math.max(2, Math.round(zoom * 0.5)); // renderer's flag pixel unit
+    const poleH = u * 7, flagW = u * 5, pad = u * 2;
+    for (let k = rallies.length - 1; k >= 0; k--) {
+      const r = rallies[k];
+      if (r.team !== 0) continue;
+      const bx = (r.x - cam.x) * zoom; // pole base == rally point
+      const by = (r.y - cam.y) * zoom;
+      if (mx >= bx - pad && mx <= bx + flagW + pad &&
+          my >= by - poleH - pad && my <= by + pad) return r.id;
+    }
+    return -1;
   };
 
   canvas.addEventListener('contextmenu', (e) => e.preventDefault());
@@ -61,9 +81,14 @@ export const create = (canvas, cam, world) => {
     (e.button === 1 || e.button === 2) && (dragging = false);
     if (e.button !== 0 || !selecting) return;
     selecting = false;
-    // A near-stationary press is a click → move order; a real drag is a box.
+    // A near-stationary press is a click; a real drag is a box.
     if (Math.abs(sx1 - sx0) + Math.abs(sy1 - sy0) < CLICK_SLOP) {
-      world.commandSelected(Camera.screenToWorldX(cam, sx1), Camera.screenToWorldY(cam, sy1));
+      // Clicking a friendly flag grabs its squad; clicking bare ground commands
+      // the current selection there.
+      const id = pickRally(sx1, sy1);
+      id !== -1
+        ? world.selectByRally(id)
+        : world.commandSelected(Camera.screenToWorldX(cam, sx1), Camera.screenToWorldY(cam, sy1));
     } else {
       world.selectInRect(
         Camera.screenToWorldX(cam, sx0), Camera.screenToWorldY(cam, sy0),

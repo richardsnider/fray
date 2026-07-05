@@ -33,10 +33,11 @@ let tick = 0;
 // pass, so kill resolution doesn't depend on unit iteration order.
 const dmg = new Float32Array(MAX_UNITS);
 
-// Player control: a subset of team-0 units is `selected` (flag on the unit), and
-// they march to `playerTarget` instead of their rally point. Everything else
-// advances on its own default rally point (assigned per squad at spawn).
-let playerTarget = null;
+// Player control: a subset of team-0 units is `selected` (flag on the unit).
+// Every unit always marches to its own rally point; the player commands a
+// selection by repointing (or minting) the rally flag it follows — there is no
+// separate override, so orders survive re-selection and read straight off the
+// same rallyX/rallyY the sim already uses.
 
 // Live counts for the HUD, refreshed each tick.
 const stats = { team0: 0, team1: 0 };
@@ -45,11 +46,31 @@ const stats = { team0: 0, team1: 0 };
 // reproduces the whole battle. Decorrelated from the terrain seed via XOR.
 let rng = Math.random;
 
-// One entry per spawned squad: the world-space rally point it marches to, its
-// team, and a short per-team code name ("a", "b", …) for the flag overlay.
+// One entry per rally flag: a stable id, the world-space point units march to,
+// its team, and a short per-team code name ("a", "b", …) for the overlay. Squads
+// seed one each at spawn; the player mints more by commanding a selection.
 const rallies = [];
 const rallyLabelN = [0, 0]; // next label index per team, reset each init
+let rallyNextId = 0;        // monotonic id source; ids stay valid across pruning
 export const getRallies = () => rallies;
+
+// Create a rally flag for `team` at (x, y) and return its stable id.
+const newRally = (x, y, team) => {
+  const id = rallyNextId++;
+  const label = String.fromCharCode(97 + rallyLabelN[team]++);
+  rallies.push({ id, x, y, team, label });
+  return id;
+};
+
+const rallyById = (id) => rallies.find((r) => r.id === id);
+
+// Drop flags no living unit follows any more (emptied squads, moved-off groups).
+// Cheap and only run on command, so ghost flags never linger on the field.
+const pruneRallies = () => {
+  const live = new Set();
+  for (let i = 0; i < U.count; i++) U.state[i] !== DEAD && live.add(U.rallyId[i]);
+  for (let k = rallies.length - 1; k >= 0; k--) live.has(rallies[k].id) || rallies.splice(k, 1);
+};
 
 export const init = (seed = 0) => {
   rng = mulberry32((seed ^ 0x9e3779b9) >>> 0);
@@ -57,10 +78,10 @@ export const init = (seed = 0) => {
   grid = Grid.create(W, H, SEP_RADIUS);
   archery = Archery.create();
   tick = 0;
-  playerTarget = null;
   deaths.n = 0;
   rallies.length = 0;
   rallyLabelN[0] = rallyLabelN[1] = 0;
+  rallyNextId = 0;
   U.reset();
   spawnArmies();
 };
@@ -79,13 +100,52 @@ export const selectInRect = (x0, y0, x1, y1) => {
       U.x[i] >= xlo && U.x[i] <= xhi && U.y[i] >= ylo && U.y[i] <= yhi;
     U.selected[i] = hit ? 1 : 0;
   }
-  // A fresh selection has no standing order — hold default AI until commanded.
-  playerTarget = null;
 };
 
-// Order the current selection to a world point (sets their march direction).
+// Select every live team-0 unit that follows the rally flag `id`, replacing the
+// previous selection — the click-a-flag-to-grab-its-squad gesture.
 // fallow-ignore-next-line unused-export
-export const commandSelected = (x, y) => { playerTarget = { x, y }; };
+export const selectByRally = (id) => {
+  for (let i = 0; i < U.count; i++)
+    U.selected[i] = (U.team[i] === 0 && U.state[i] !== DEAD && U.rallyId[i] === id) ? 1 : 0;
+};
+
+// Command the current selection to a world point. If the selection is exactly
+// one flag's whole living membership, that flag just moves (update); otherwise a
+// fresh flag is minted and the selection reassigned to it (create). Either way
+// the units keep marching to their rally, so they engage enemies met en route.
+// fallow-ignore-next-line unused-export
+export const commandSelected = (x, y) => {
+  // Tally, over living team-0 units, each flag's total members and how many of
+  // them are selected.
+  const total = new Map(), sel = new Map();
+  let anySel = false;
+  for (let i = 0; i < U.count; i++) {
+    if (U.team[i] !== 0 || U.state[i] === DEAD) continue;
+    const id = U.rallyId[i];
+    total.set(id, (total.get(id) || 0) + 1);
+    if (U.selected[i]) { sel.set(id, (sel.get(id) || 0) + 1); anySel = true; }
+  }
+  if (!anySel) return;
+
+  // Reuse the flag only when the selection is one flag's entire membership.
+  let targetId = -1;
+  if (sel.size === 1) {
+    const [id, n] = sel.entries().next().value;
+    if (n === total.get(id)) targetId = id;
+  }
+  if (targetId === -1) targetId = newRally(x, y, 0);
+
+  const ral = rallyById(targetId);
+  ral.x = x; ral.y = y;
+  for (let i = 0; i < U.count; i++) {
+    if (U.team[i] === 0 && U.state[i] !== DEAD && U.selected[i]) {
+      U.rallyId[i] = targetId;
+      U.rallyX[i] = x; U.rallyY[i] = y;
+    }
+  }
+  pruneRallies();
+};
 
 // Count selected live units by type for the HUD. Recomputed on demand so it
 // stays honest as selected units die. Returned object is reused.
@@ -148,8 +208,7 @@ const spawnSquad = (x0, x1, y0, y1, team, type, n) => {
   const rx = team === 0 ? rand(W * 0.55, W * 0.92) : rand(W * 0.08, W * 0.45);
   const ry = rand(H * 0.1, H * 0.9);
   // Record it for the flag overlay, tagged with a short per-team code name.
-  const label = String.fromCharCode(97 + rallyLabelN[team]++);
-  rallies.push({ x: rx, y: ry, team, label });
+  const rid = newRally(rx, ry, team);
   for (let i = 0; i < n; i++) {
     let x = cx, y = cy, tries = 0;
     // Uniform-in-disk offset; reject water so nobody spawns stranded, falling
@@ -160,7 +219,7 @@ const spawnSquad = (x0, x1, y0, y1, team, type, n) => {
       x = cx + Math.cos(ang) * rad;
       y = cy + Math.sin(ang) * rad;
     } while (T.isWaterAt(x, y) && ++tries < 8);
-    U.spawn(x, y, team, type, rx, ry);
+    U.spawn(x, y, team, type, rx, ry, rid);
   }
 };
 
@@ -293,18 +352,11 @@ export const step = (dt) => {
       const d = mag(ax, ay) || 1;
       ax = (ax / d) * SEEK_ACCEL;
       ay = (ay / d) * SEEK_ACCEL;
-    } else if (playerTarget && U.selected[i]) {
-      // Player-controlled: selected units steer straight at the commanded point,
-      // ignoring their rally point. Water avoidance below still keeps them dry.
-      ax = playerTarget.x - xi;
-      ay = playerTarget.y - yi;
-      const d = mag(ax, ay);
-      d > 0.001 ? (ax = (ax / d) * SEEK_ACCEL, ay = (ay / d) * SEEK_ACCEL) : (ax = 0, ay = 0);
     } else {
-      // Default AI: march toward this squad's rally point on the enemy side of
-      // the field. Scattered rally points fan the army into several fronts;
-      // enemies met on the way trigger the engage branch above. Shoreline
-      // avoidance below keeps the straight-line path out of the water.
+      // March toward this unit's rally point — the squad's spawn objective, or
+      // wherever the player last commanded the selection it belongs to. Enemies
+      // met on the way trigger the engage branch above; shoreline avoidance
+      // below keeps the straight-line path out of the water.
       ax = U.rallyX[i] - xi;
       ay = U.rallyY[i] - yi;
       const d = mag(ax, ay);
