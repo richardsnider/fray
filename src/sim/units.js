@@ -18,16 +18,14 @@ export const type = new Uint8Array(MAX_UNITS); // UnitType: 0 knight, 1 archer, 
 export const state = new Uint8Array(MAX_UNITS);
 export const selected = new Uint8Array(MAX_UNITS); // 1 if the player has this unit selected
 export const cooldown = new Float32Array(MAX_UNITS); // archer reload timer (see sim/archery.js)
-export const rallyX = new Float32Array(MAX_UNITS);   // march goal (this unit's rally flag)
-export const rallyY = new Float32Array(MAX_UNITS);
-export const rallyId = new Int32Array(MAX_UNITS);    // stable id of the rally flag this unit follows
+export const rallyId = new Int32Array(MAX_UNITS);    // id of the rally flag this unit marches to (world.js resolves it)
 
 export const STATE = { ACTIVE: 0, ROUTING: 1, DEAD: 2 };
 
 // `count` is exported live: importers see it grow via the module binding.
 export let count = 0;
 
-export const spawn = (sx, sy, t, ut, rx = sx, ry = sy, rid = -1) => {
+export const spawn = (sx, sy, t, ut, rid = -1) => {
   const i = count++;
   px[i] = x[i] = sx;
   py[i] = y[i] = sy;
@@ -39,8 +37,6 @@ export const spawn = (sx, sy, t, ut, rx = sx, ry = sy, rid = -1) => {
   state[i] = STATE.ACTIVE;
   selected[i] = 0;
   cooldown[i] = 0;
-  rallyX[i] = rx;
-  rallyY[i] = ry;
   rallyId[i] = rid;
   return i;
 };
@@ -56,7 +52,6 @@ const copyUnit = (dst, src) => {
   team[dst] = team[src]; type[dst] = type[src]; state[dst] = state[src];
   selected[dst] = selected[src];
   cooldown[dst] = cooldown[src];
-  rallyX[dst] = rallyX[src]; rallyY[dst] = rallyY[src];
   rallyId[dst] = rallyId[src];
 };
 
