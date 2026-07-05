@@ -332,35 +332,31 @@ export const step = (dt) => {
     routNear > 0 && (m -= FEAR_PANIC * dt * Math.min(routNear, 6));
     U.morale[i] = m; // clamped in the apply pass
 
-    // --- movement (per-branch vector math with local consts stays if/else) ----
-    let ax, ay;
+    // --- movement: resolve one move desire, then a single shared steer block ---
+    // Every state moves relative to one point: a routing unit flees the nearest
+    // enemy, an engaged unit presses it, everyone else marches to their rally.
+    // `sign` picks seek (+1, toward) or flee (-1, away); a routing unit that
+    // senses no enemy has no target and just coasts — damping bleeds off its
+    // speed while separation still applies. The rally is the squad's spawn
+    // objective, or wherever the player last commanded the selection it belongs
+    // to; enemies met on the way flip it into the engage branch above.
+    let ax = 0, ay = 0;
+    let tx = 0, ty = 0, sign = 1, seek = true;
     if (statei === ROUTING) {
-      // Flee directly away from the nearest enemy; if none is sensed, keep going.
-      if (ceIdx !== -1) {
-        ax = xi - U.x[ceIdx];
-        ay = yi - U.y[ceIdx];
-        const d = mag(ax, ay) || 1;
-        ax = (ax / d) * SEEK_ACCEL;
-        ay = (ay / d) * SEEK_ACCEL;
-      } else {
-        ax = 0; ay = 0;
-      }
+      seek = ceIdx !== -1;
+      seek && (tx = U.x[ceIdx], ty = U.y[ceIdx], sign = -1);
     } else if (engaged) {
-      // Press the attack: lean into the closest enemy.
-      ax = U.x[ceIdx] - xi;
-      ay = U.y[ceIdx] - yi;
-      const d = mag(ax, ay) || 1;
-      ax = (ax / d) * SEEK_ACCEL;
-      ay = (ay / d) * SEEK_ACCEL;
+      tx = U.x[ceIdx]; ty = U.y[ceIdx];
     } else {
-      // March toward this unit's rally point — the squad's spawn objective, or
-      // wherever the player last commanded the selection it belongs to. Enemies
-      // met on the way trigger the engage branch above; shoreline avoidance
-      // below keeps the straight-line path out of the water.
-      ax = U.rallyX[i] - xi;
-      ay = U.rallyY[i] - yi;
-      const d = mag(ax, ay);
-      d > 0.001 ? (ax = (ax / d) * SEEK_ACCEL, ay = (ay / d) * SEEK_ACCEL) : (ax = 0, ay = 0);
+      tx = U.rallyX[i]; ty = U.rallyY[i];
+    }
+    // Unit vector to (or from) the target × SEEK_ACCEL; left at zero when there
+    // is no target or the unit is already sitting on the point.
+    if (seek) {
+      const dx = (tx - xi) * sign;
+      const dy = (ty - yi) * sign;
+      const d = mag(dx, dy);
+      d > 0.001 && (ax = (dx / d) * SEEK_ACCEL, ay = (dy / d) * SEEK_ACCEL);
     }
     ax += sx * SEP_ACCEL;
     ay += sy * SEP_ACCEL;
