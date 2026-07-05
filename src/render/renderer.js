@@ -18,6 +18,7 @@
 import * as U from '../sim/units.js';
 import * as T from '../sim/terrain.js';
 import * as world from '../sim/world.js';
+import * as Rally from '../sim/rally.js';
 import { FLIGHT_TICKS } from '../sim/archery.js';
 import { viewWorldW, viewWorldH } from './camera.js';
 import { flagMetrics } from './flag.js';
@@ -435,7 +436,7 @@ const drawArrows = (r, alpha, cam) => {
 // so a per-frame path (no baked sprites) stays cheap. The pole base sits on the
 // world-space rally point; the squad's code name is stamped just below it.
 const drawRallies = (r, cam) => {
-  const rallies = world.getRallies();
+  const rallies = Rally.getRallies();
   if (!rallies.length) return;
   const ctx = r.ctx;
   const zoom = cam.zoom;

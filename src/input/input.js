@@ -6,16 +6,18 @@
 //   wheel              → zoom toward the cursor
 //   W/A/S/D or arrows  → pan the camera
 //
-// createInput() wires the DOM listeners and returns { update, getSelectionBox }.
+// create() wires the DOM listeners and returns { update, getSelectionBox }. It
+// receives the sim's command layer (sim/command.js) by injection.
 
 import * as Camera from '../render/camera.js';
+import * as Rally from '../sim/rally.js';
 import { flagMetrics } from '../render/flag.js';
 
 const PAN_KEYS_SPEED = 450; // world units/sec at zoom 1
 const ZOOM_STEP = 1.01;     // multiplicative zoom per wheel notch (closer to 1 = slower)
 const CLICK_SLOP = 6;       // device px of travel below which a left-drag is a click, not a box
 
-export const create = (canvas, cam, world) => {
+export const create = (canvas, cam, commands) => {
   const keys = new Set();
   let dragging = false;             // right/middle pan drag
   let lastX = 0, lastY = 0;
@@ -34,7 +36,7 @@ export const create = (canvas, cam, world) => {
   // id of the topmost one struck or -1. The clickable box is the drawn flag's
   // own geometry (pole + pennant, shared via flagMetrics), grown a little for slop.
   const pickRally = (mx, my) => {
-    const rallies = world.getRallies();
+    const rallies = Rally.getRallies();
     const zoom = cam.zoom;
     const { px, poleH, flagW } = flagMetrics(zoom);
     const pad = px * 2;
@@ -89,10 +91,10 @@ export const create = (canvas, cam, world) => {
       // the current selection there.
       const id = pickRally(sx1, sy1);
       id !== -1
-        ? world.selectByRally(id)
-        : world.commandSelected(Camera.screenToWorldX(cam, sx1), Camera.screenToWorldY(cam, sy1));
+        ? commands.selectByRally(id)
+        : commands.commandSelected(Camera.screenToWorldX(cam, sx1), Camera.screenToWorldY(cam, sy1));
     } else {
-      world.selectInRect(
+      commands.selectInRect(
         Camera.screenToWorldX(cam, sx0), Camera.screenToWorldY(cam, sy0),
         Camera.screenToWorldX(cam, sx1), Camera.screenToWorldY(cam, sy1),
       );

@@ -7,6 +7,7 @@ import * as Renderer from './render/renderer.js';
 import * as Camera from './render/camera.js';
 import * as Input from './input/input.js';
 import * as world from './sim/world.js';
+import * as Command from './sim/command.js';
 import { hashSeed } from './sim/rng.js';
 import { TICK_MS, TICK_S, WORLD_W, WORLD_H } from './config.js';
 
@@ -51,7 +52,7 @@ world.init(hashSeed(seedText));
 
 const renderer = Renderer.create(canvas);
 const camera = Camera.create(WORLD_W, WORLD_H, renderer.width, renderer.height);
-const input = Input.create(canvas, camera, world);
+const input = Input.create(canvas, camera, Command);
 
 window.addEventListener('resize', () => {
   Renderer.resize(renderer);
@@ -101,7 +102,7 @@ const frame = (now) => {
 
   fps += (1000 / Math.max(dt, 1) - fps) * 0.1;
   const s = world.getStats();
-  const sel = world.getSelectionCounts();
+  const sel = Command.getSelectionCounts();
   hud.textContent =
     `silver ${s.team0}   red ${s.team1}\n` +
     `fps    ${fps.toFixed(0)}   zoom ${camera.zoom.toFixed(2)}\n` +

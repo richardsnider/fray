@@ -72,7 +72,9 @@ src/
     terrain.js       elevation/water/brush grids + sampling
     archery.js       massed volley fire: beaten-zone aiming + arrow-flight queue
     rng.js           seeded PRNG (mulberry32) so a seed reproduces a battle
-    world.js         steering, combat, morale, rally-point marching, selection
+    rally.js         rally-flag store — single source of truth for march targets
+    command.js       player selection + orders (repoints rally flags)
+    world.js         steering, combat, morale, rally-point marching
   render/
     camera.js        viewport: world<->screen transform, pan/zoom, clamping
     renderer.js      Canvas drawing (terrain blit + culled units)
