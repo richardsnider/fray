@@ -52,6 +52,10 @@ let rng = Math.random;
 const rallies = [];
 const rallyLabelN = [0, 0]; // next label index per team, reset each init
 let rallyNextId = 0;        // monotonic id source; ids stay valid across pruning
+// Provenance of the current player selection: the rally id it was grabbed from
+// (selectByRally), or -1 when it's a fresh box-select with no flag behind it.
+// commandSelected reuses this flag rather than re-deriving it from the selection.
+let commandRally = -1;
 export const getRallies = () => rallies;
 
 // Create a rally flag for `team` at (x, y) and return its stable id.
@@ -82,6 +86,7 @@ export const init = (seed = 0) => {
   rallies.length = 0;
   rallyLabelN[0] = rallyLabelN[1] = 0;
   rallyNextId = 0;
+  commandRally = -1;
   U.reset();
   spawnArmies();
 };
@@ -100,6 +105,7 @@ export const selectInRect = (x0, y0, x1, y1) => {
       U.x[i] >= xlo && U.x[i] <= xhi && U.y[i] >= ylo && U.y[i] <= yhi;
     U.selected[i] = hit ? 1 : 0;
   }
+  commandRally = -1; // a freshly boxed group has no flag behind it
 };
 
 // Select every live team-0 unit that follows the rally flag `id`, replacing the
@@ -108,33 +114,25 @@ export const selectInRect = (x0, y0, x1, y1) => {
 export const selectByRally = (id) => {
   for (let i = 0; i < U.count; i++)
     U.selected[i] = (U.team[i] === 0 && U.state[i] !== DEAD && U.rallyId[i] === id) ? 1 : 0;
+  commandRally = id; // remember the flag this selection was grabbed from
 };
 
-// Command the current selection to a world point. If the selection is exactly
-// one flag's whole living membership, that flag just moves (update); otherwise a
-// fresh flag is minted and the selection reassigned to it (create). Either way
-// the units keep marching to their rally, so they engage enemies met en route.
+// Command the current selection to a world point. The selection carries a
+// provenance flag (commandRally): a squad grabbed by its flag moves that flag —
+// and repeat commands drag the same one — while a freshly boxed group mints a new
+// flag, leaving any unselected squad-mates on their old objective. Either way the
+// units keep marching to their rally, so they engage enemies met en route.
 // fallow-ignore-next-line unused-export
 export const commandSelected = (x, y) => {
-  // Tally, over living team-0 units, each flag's total members and how many of
-  // them are selected.
-  const total = new Map(), sel = new Map();
   let anySel = false;
-  for (let i = 0; i < U.count; i++) {
-    if (U.team[i] !== 0 || U.state[i] === DEAD) continue;
-    const id = U.rallyId[i];
-    total.set(id, (total.get(id) || 0) + 1);
-    if (U.selected[i]) { sel.set(id, (sel.get(id) || 0) + 1); anySel = true; }
-  }
+  for (let i = 0; i < U.count && !anySel; i++)
+    anySel = U.team[i] === 0 && U.state[i] !== DEAD && U.selected[i] === 1;
   if (!anySel) return;
 
-  // Reuse the flag only when the selection is one flag's entire membership.
-  let targetId = -1;
-  if (sel.size === 1) {
-    const [id, n] = sel.entries().next().value;
-    if (n === total.get(id)) targetId = id;
-  }
-  if (targetId === -1) targetId = newRally(x, y, 0);
+  // Reuse the flag the selection came from if it still exists, else mint one;
+  // remember it so the next command to this same selection drags it along.
+  const targetId = commandRally >= 0 && rallyById(commandRally) ? commandRally : newRally(x, y, 0);
+  commandRally = targetId;
 
   const ral = rallyById(targetId);
   ral.x = x; ral.y = y;
