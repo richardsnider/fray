@@ -10,12 +10,12 @@ import { clamp, clampIndex, mag } from '../util/math.js';
 import { cellCoord } from '../util/grid2d.js';
 import {
   MAX_UNITS, WORLD_W, WORLD_H, ARMY_SIZE, SEEK_ACCEL, SEP_RADIUS, SEP_ACCEL, DAMPING,
-  ATTACK_RANGE, FLEE_SPEED_MULT,
+  MAX_STEER_SPEED, ATTACK_RANGE, FLEE_SPEED_MULT,
   MORALE_MAX, ROUT_THRESHOLD, RALLY_THRESHOLD, MORALE_REGEN,
   FEAR_OUTNUMBERED, FEAR_PANIC, HIT_FEAR,
   SLOPE_SPEED, COVER_SLOW, HEIGHT_DMG, WATER_LOOK, WATER_AVOID,
   UnitType, UNIT_TYPE_COUNT, ARMY_MIX, SQUAD_SIZE, SQUAD_RADIUS,
-  TYPE_SPEED, TYPE_MELEE_DPS, TYPE_ARMOR, DMG_MULT,
+  TYPE_SPEED_MULT, TYPE_MELEE_DPS, TYPE_ARMOR, DMG_MULT,
   CHARGE_MIN_SPEED, CHARGE_DMG, CHARGE_MORALE, CHARGE_COOLDOWN,
 } from '../config.js';
 
@@ -377,12 +377,17 @@ export const step = (dt) => {
 
     let nvx = (U.vx[i] + ax * dt) * DAMPING;
     let nvy = (U.vy[i] + ay * dt) * DAMPING;
-    const baseSp = TYPE_SPEED[typei];
-    const maxSp = statei === ROUTING ? baseSp * FLEE_SPEED_MULT : baseSp;
+    // Clamp the raw steering velocity to a global ceiling so a packed separation
+    // burst can't fling anyone; per-type pace is applied to travel below.
     let sp = mag(nvx, nvy);
-    sp > maxSp && (nvx *= maxSp / sp, nvy *= maxSp / sp, sp = maxSp);
+    sp > MAX_STEER_SPEED && (nvx *= MAX_STEER_SPEED / sp, nvy *= MAX_STEER_SPEED / sp, sp = MAX_STEER_SPEED);
     U.vx[i] = nvx;
     U.vy[i] = nvy;
+
+    // Per-type march pace: a direct multiplier on how far this velocity carries
+    // the unit, so cavalry cover ground faster than infantry. Routing units flee
+    // quicker still.
+    const pace = TYPE_SPEED_MULT[typei] * (statei === ROUTING ? FLEE_SPEED_MULT : 1);
 
     // Terrain speed factor: brush slows; uphill slows, downhill speeds up.
     let tf = 1 - T.cover[tcell] * COVER_SLOW;
@@ -394,8 +399,8 @@ export const step = (dt) => {
     }
     tf = clamp(tf, 0.35, 1.35);
 
-    let nx = xi + nvx * tf * dt;
-    let ny = yi + nvy * tf * dt;
+    let nx = xi + nvx * tf * pace * dt;
+    let ny = yi + nvy * tf * pace * dt;
 
     // Water is impassable: try to slide along the shore, else hold position.
     T.isWaterAt(nx, ny) && (

@@ -27,11 +27,30 @@
       background: rgba(0,0,0,0.5); color: #cfe; font: inherit; cursor: pointer;
     }
     #seedbar button:hover { background: rgba(80,110,140,0.4); }
+    #speedbar {
+      position: fixed; bottom: 8px; left: 10px;
+      font: 12px/1.4 ui-monospace, Menlo, Consolas, monospace;
+      color: #cfe; display: flex; gap: 6px; align-items: center;
+    }
+    #speedbar button {
+      min-width: 30px; padding: 3px 7px; border: 1px solid #456; border-radius: 4px;
+      background: rgba(0,0,0,0.5); color: #cfe; font: inherit; cursor: pointer;
+    }
+    #speedbar button:hover { background: rgba(80,110,140,0.4); }
+    #speedbar button.active { background: rgba(120,160,200,0.55); border-color: #9cf; color: #fff; }
   </style>
 </head>
 <body>
   <canvas id="c"></canvas>
   <div id="hud"></div>
+  <div id="speedbar">
+    <span>speed</span>
+    <button data-speed="0" title="pause (space)">❚❚</button>
+    <button data-speed="0.5">0.5×</button>
+    <button data-speed="1" class="active">1×</button>
+    <button data-speed="2">2×</button>
+    <button data-speed="4">4×</button>
+  </div>
   <form id="seedbar" autocomplete="off">
     <label for="seed">seed</label>
     <input id="seed" name="seed" type="text" />

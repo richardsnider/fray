@@ -13,6 +13,31 @@ import { TICK_MS, TICK_S, WORLD_W, WORLD_H } from './config.js';
 const canvas = document.getElementById('c');
 const hud = document.getElementById('hud');
 const seedInput = document.getElementById('seed');
+const speedBar = document.getElementById('speedbar');
+
+// Classic RTS game speed: a multiplier on how fast sim-time accumulates, so the
+// fixed-timestep loop below runs proportionally more (or fewer) ticks per real
+// second. 0 pauses. Determinism is untouched — every tick is still TICK_S.
+let gameSpeed = 1;
+let lastPlaySpeed = 1; // remembered so space toggles pause without losing the rate
+const MAX_STEPS = 12;  // ceiling on sim ticks per frame; drops surplus to avoid a spiral
+
+const setSpeed = (v) => {
+  gameSpeed = v;
+  v > 0 && (lastPlaySpeed = v);
+  for (const b of speedBar.querySelectorAll('button'))
+    b.classList.toggle('active', +b.dataset.speed === v);
+};
+speedBar.addEventListener('click', (e) => {
+  const b = e.target.closest('button');
+  b && setSpeed(+b.dataset.speed);
+});
+// Space toggles pause/resume (ignored while typing in the seed box).
+window.addEventListener('keydown', (e) => {
+  if (e.code !== 'Space' || e.target.tagName === 'INPUT') return;
+  e.preventDefault();
+  setSpeed(gameSpeed === 0 ? lastPlaySpeed : 0);
+});
 
 const randomSeed = () => Math.floor(Math.random() * 1e9).toString(36);
 
@@ -58,15 +83,18 @@ let simMs = 0;
 const frame = (now) => {
   const dt = Math.min(now - last, 250); // avoid spiral-of-death after a tab stall
   last = now;
-  acc += dt;
+  acc += dt * gameSpeed;                 // game speed scales how fast sim-time builds up
 
-  input.update(dt / 1000);
+  input.update(dt / 1000);               // camera still pans/zooms while paused
 
   const t0 = performance.now();
-  while (acc >= TICK_MS) {
+  let steps = 0;
+  while (acc >= TICK_MS && steps < MAX_STEPS) {
     world.step(TICK_S);
     acc -= TICK_MS;
+    steps++;
   }
+  steps === MAX_STEPS && (acc = 0);      // fell behind (slow frame / high speed): drop the backlog
   simMs = performance.now() - t0;
 
   Renderer.render(renderer, acc / TICK_MS, camera, input.getSelectionBox());
@@ -77,9 +105,9 @@ const frame = (now) => {
   hud.textContent =
     `silver ${s.team0}   red ${s.team1}\n` +
     `fps    ${fps.toFixed(0)}   zoom ${camera.zoom.toFixed(2)}\n` +
-    `sim    ${simMs.toFixed(1)}ms\n` +
+    `sim    ${simMs.toFixed(1)}ms   speed ${gameSpeed === 0 ? 'paused' : gameSpeed + '×'}\n` +
     `selected ${sel.total}   inf ${sel.pike}  arch ${sel.archer}  cav ${sel.knight}\n` +
-    `left-drag: select   left-click: move   right-drag/WASD: pan   wheel: zoom`;
+    `left-drag: select   left-click: move   right-drag/WASD: pan   wheel: zoom   space: pause`;
 
   requestAnimationFrame(frame);
 };

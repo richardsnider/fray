@@ -15,11 +15,13 @@ export const MAX_ZOOM = 4;              // CSS px per world unit at full zoom-in
 // Vertical-slice army sizes. Bump these to stress-test the renderer/grid.
 export const ARMY_SIZE = 2500;
 
-// Steering / movement (world units per second). Per-type march speed is TYPE_SPEED.
+// Steering / movement. SEEK_ACCEL + DAMPING set the base march velocity a unit
+// eases to; per-type pace is then a direct multiplier on travel (TYPE_SPEED_MULT).
 export const SEEK_ACCEL = 90;
 export const SEP_RADIUS = 6;            // also the spatial-grid cell size
 export const SEP_ACCEL = 220;
 export const DAMPING = 0.86;            // per-tick velocity retention
+export const MAX_STEER_SPEED = 45;      // safety ceiling on raw steering velocity so a tight press can't fling units
 
 // Terrain. Stored on a coarse grid (one cell per TERRAIN_CELL world units) and
 // sampled by both the sim and the renderer.
@@ -43,7 +45,7 @@ export const UNIT_TYPE_COUNT = 3;
 
 //                          KNIGHT ARCHER  PIKE
 export const TYPE_HP        = [150,   65,   100];  // starting hit points
-export const TYPE_SPEED     = [ 72,   40,    40];  // max march speed (world u/s)
+export const TYPE_SPEED_MULT = [1.8,  1.0,   1.0]; // march-pace multiplier: cavalry outrun infantry
 export const TYPE_MELEE_DPS = [ 18,    4,    14];  // hp/sec in melee reach
 export const TYPE_ARMOR     = [0.45, 0.10,  0.30]; // fractional incoming-dmg reduction
 
