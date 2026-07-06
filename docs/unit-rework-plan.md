@@ -13,9 +13,9 @@ type-vs-type matrix and instead fall out of how weapons interact with armor,
 distance, movement, and terrain. Flanking, charge run-ups, and formation depth
 become emergent rather than scripted.
 
-This is a rework of the combat core, not a patch: melee changes from
-continuous DPS to discrete cooldown-gated strikes, and archery splits into two
-classes. We accept refactoring `world.js` combat and `archery.js` to get there.
+This is a rework of the combat core, not a patch: the damage model is rebuilt
+around weapon profiles, and archery splits into two classes. We accept
+refactoring `world.js` combat and `archery.js` to get there.
 
 ---
 
@@ -68,8 +68,8 @@ Migration mapping: KNIGHT → knights, ARCHER → longbowmen, PIKE → pikemen.
 ### SoA changes (`units.js`)
 
 - `type` → `arch` (Uint8, archetype id) — same role, renamed for clarity.
-- `cooldown` (exists) — generalizes from "archer reload" to "weapon strike
-  cooldown" for every unit.
+- `cooldown` (exists) — stays the ranged volley-reload timer, now per bow
+  class (§4). Melee needs no per-unit combat state at all (§3).
 - **new** `steady` (Float32 or reuse pattern) — seconds stationary, for the
   longbow stand-still rule (see §4). May be derivable from per-tick travel
   instead of stored; decide at implementation.
@@ -96,8 +96,12 @@ MOUNT_SPEED  = 1.8            // pace multiplier when mounted
 
 // Weapon:            BLADE  BLUNT  POLEARM  BOW  LONGBOW  LANCE
 WEAPON_RANGE    = [      5,     5,      11,   70,     110,     6 ]
-WEAPON_DMG      = [     14,    13,      24,   14,      30,    12 ]  // per strike
-WEAPON_COOLDOWN = [    0.8,   0.9,     1.5,  0.9,     1.6,   1.0 ]  // seconds
+WEAPON_DPS      = [     16,    14,      16,    —,       —,    12 ]  // melee hp/sec
+// polearm dps is at full reach (§3 profile); lance dps is standing still (§3).
+// Ranged weapons are volley events, not rates (see §4):
+//                     BOW  LONGBOW
+VOLLEY_DMG      = [     14,      30 ]  // per volley
+VOLLEY_RELOAD   = [    0.9,     1.6 ]  // seconds
 
 // Weapon-vs-armor damage multiplier (replaces DMG_MULT):
 //                      vs NONE  vs ARMORED  vs HEAVY
@@ -114,29 +118,42 @@ MOUNT_ARROW_MULT = 1.4   // BOW/LONGBOW damage vs mounted units below HEAVY:
                          // unbarded horses die to massed arrows (README backlog)
 ```
 
-Sanity check vs. today: pike 14 dps continuous → polearm 24 per 1.5 s = 16 dps
-*at reach*, near zero adjacent. Knight melee 18 dps → lance 12/strike standing
-(weak in a press) but ~48/strike arriving at full gallop. Longbow volley 30
-stays.
+Sanity check vs. today: pike 14 dps → polearm 16 dps *at full reach*, near
+zero adjacent. Knight melee 18 dps → lance 12 dps standing (weak in a press)
+but several-fold that while still moving at contact. Longbow volley 30 stays.
 
 ---
 
-## 3. Melee rework: discrete strikes
+## 3. Melee rework: single-target dps × weapon profiles
 
-Today melee is `dps × dt` every tick against the closest enemy. It becomes:
+Melee **stays continuous `dps × dt` against the closest enemy only** — the
+model already in `world.js`. Discrete cooldown-gated strikes were considered
+and dropped: what makes **flanking emergent** (the todo's bet) is
+*single-targeting* — three levies around one sergeant pour in 3× dps and eat
+1× back — and the current code already has that property. Strike timing
+would add per-unit state and tick-aliasing without adding behavior; the
+"attack speed" ideas in the todo all collapse into rate tuning. Cooldowns
+live only where the action is genuinely an event: ranged volleys (§4).
 
-**Strike loop** (in the existing neighbor scan in `world.js`):
-- A unit whose `cooldown ≤ 0` with an enemy inside `WEAPON_RANGE[w]` strikes
-  the **closest enemy only** and resets `cooldown = WEAPON_COOLDOWN[w]`.
-- One target per strike + a real cooldown is what makes **flanking emergent**
-  (the todo's bet): three levies around one sergeant land 3 strikes per cycle
-  and eat 1. No facing math, no flanking bonus table.
-- Damage per strike:
-  `WEAPON_DMG[w] × WEAPON_VS_ARMOR[w][targetArmor] × heightBonus × reachProfile × terrainMods`
-  — accumulated into `dmg[]` as today, so resolution stays order-independent.
+What changes is how the damage rate is computed — every factor a
+multiplicative read of state the sim already computes:
+
+```
+dmg[target] += WEAPON_DPS[w] × dt
+             × WEAPON_VS_ARMOR[w][targetArmor]   // the §2 matrix
+             × heightBonus                       // unchanged
+             × reachProfile(w, d)                // polearm, below
+             × speedScale(w, i)                  // lance, below
+             × terrainMods                       // brush, §5
+```
+
+accumulated into `dmg[]` as today, so resolution stays order-independent.
+The todo's "slower attack speed" for polearms folds into `WEAPON_DPS`
+tuning — in a continuous model, a longer cooldown and lower damage are the
+same knob.
 
 **Polearm reach profile.** Damage scales with distance to the target:
-near-max reach ≈ full damage (the deadliest strike in the game), adjacent ≈
+near-max reach ≈ full rate (the deadliest melee in the game), adjacent ≈
 nothing — the todo's "awkwardness" without a special state:
 
 ```
@@ -159,23 +176,27 @@ the counter-play the todo wants, driven by one comparison in the move-desire
 branch.
 
 **Lance — damage scales with current speed. No meter, no stored state.**
-The todo's "high dmg when moving," taken literally: a lance strike reads the
-striker's **actual per-tick travel** — velocity × terrain factor × pace, the
-real displacement, *not* the capped raw steering velocity whose ceiling
-killed the old charge mechanic (README backlog) — and scales:
+The todo's "high dmg when moving," taken literally: the lance's `speedScale`
+reads the striker's **actual per-tick travel** — velocity × terrain factor ×
+pace, the real displacement, *not* the capped raw steering velocity whose
+ceiling killed the old charge mechanic (README backlog):
 
 ```
-speedFrac = travel / maxTravel(unit)          // 0 standing … 1 at full gallop
-lanceDmg  = WEAPON_DMG[LANCE] × (1 + speedFrac × LANCE_SPEED_MULT ≈ 3)
+speedFrac  = travel / maxTravel(unit)         // 0 standing … 1 at full gallop
+speedScale = 1 + speedFrac × LANCE_SPEED_MULT
 ```
 
 - The run-up falls out of the movement model for free: from a standstill,
   damping takes on the order of a second of open ground to ease a knight up
   to gallop, so a knight starting adjacent to its target never hits hard,
-  while one arriving off a field crossing lands ~48 on contact. Milling in a
-  press means near-zero travel and the worst weapon in the game — per the
-  todo, lance damage "is still really bad at shorter melee distances like
-  infantry."
+  while one arriving off a field crossing deals several times its standing
+  rate for the moments it is still moving. Milling in a press means
+  near-zero travel and the worst weapon in the game — per the todo, lance
+  damage "is still really bad at shorter melee distances like infantry."
+- The crash is a **self-limiting burst**: contact at gallop lasts only a
+  handful of ticks before the press bleeds the knight's speed, so
+  `LANCE_SPEED_MULT` needs to be large for the impact to read — start ~5,
+  tune in the harness.
 - **Nothing may slow the approach.** Verified against the current movement
   code: there is no arrival deceleration (seek acceleration is
   constant-magnitude all the way to contact) and separation is friend-only,
@@ -206,8 +227,8 @@ a strike needs a victim at reach, and the neighbor walk that finds one is
 already paid for by separation — closest-enemy targeting rides along for one
 extra compare. A melee "pressure grid" (damage into a cell, split across
 occupants) would be cheaper at extreme unit counts, but it erases precisely
-what this rework bets on: single-target cooldown strikes are where flanking,
-reach profiles, and formation depth come from.
+what this rework bets on: single-target melee is where flanking, reach
+profiles, and formation depth come from.
 
 ---
 
@@ -226,11 +247,15 @@ instead of hard-coding ARCHER:
 | fire on the move     | **yes**                   | **no — see below**             |
 
 **Longbow stand-still rule** ("must stop moving for the entire cooldown"):
-the reload cooldown **only ticks down while the unit is stationary** (per-tick
-travel below an epsilon). Moving pauses the countdown; the archer must
-accumulate a full reload's worth of standing still before the next volley.
-One condition on the existing `cooldown -= dt` line. (Alternative — moving
-*resets* the countdown — is harsher; proposed: pause, tune later.)
+the reload only counts down while the unit is stationary (per-tick travel
+below an epsilon), and any movement **resets it to the full reload** — the
+archer must stand still for one *uninterrupted* reload before the next
+volley. Repositioning a longbow line is a real commitment; plant them early.
+Still one branch on the existing `cooldown -= dt` line (moving →
+`cooldown = VOLLEY_RELOAD`, stationary → tick down). The gentler
+alternative — pausing the countdown and letting standing time accumulate
+across interruptions — was considered and rejected as making longbows too
+freely mobile.
 
 **Shortbows on the move** need no code at all: without the stationary gate
 they fire whenever the cooldown lapses, marching or not. Mounted + BOW =
@@ -258,12 +283,10 @@ judgement stays reserved for the AI director (README backlog).
   it already "punishes cavalry" proportionally since it's a multiplier on a
   faster base. No change needed beyond tuning.
 - **Ranged damage into/out of** — shooter-side reduction added in §4.
-- **Polearm awkwardness in trees** (confirmed: a penalty — longer cooldown
-  and/or *lower* damage) — strike cooldown scales up with cover,
-  `cooldown × (1 + cover × POLEARM_BRUSH ≈ 0.75)`, optionally damage down,
-  `dmg × (1 − cover × k)`. Start with cooldown only: one knob is easier to
-  tune, and slower strikes already read as "can't swing a pike between
-  trees."
+- **Polearm awkwardness in trees** (confirmed: a penalty) — with melee as a
+  continuous rate (§3), "longer cooldown" and "lower damage" are the same
+  knob: `dps × (1 − cover × POLEARM_BRUSH ≈ 0.4)`, one factor off a terrain
+  read already in hand.
 
 ### Mud (new)
 
@@ -316,7 +339,7 @@ counters — which is the Total War instinct, minus its stacked hidden stats
 and matched-combat choreography. Depth here should come from **few, visible
 mechanisms interacting**, per the north star.
 
-Three principles, settled:
+Five principles, settled:
 
 - **Routing units don't fight back — that *is* the pursuit advantage.** No
   pursuit damage modifier, and no targeting change either: routers stay
@@ -325,13 +348,28 @@ Three principles, settled:
   guarantees this today — the pursuer's edge is a free hand, not a
   multiplier. Nothing to build; the principle is recorded here so nobody
   "improves" it later.
-- **Stats are sustainable rates — no fatigue resource.** Every speed and
-  cooldown in §2 reads as "what the unit can do sustainably without
+- **Stats are sustainable rates — no fatigue resource.** Every speed, rate,
+  and reload in §2 reads as "what the unit can do sustainably without
   over-wearing itself." Conceptually simpler than a fatigue meter driving
-  variable paces, and it keeps the tuning surface flat. If a burst-vs-sustain
-  distinction is ever needed somewhere specific, the lance is the pattern to
-  copy: scale off state the sim already computes — current speed, distance,
-  cover — never a new meter or resource.
+  variable paces, and it keeps the tuning surface flat. Plain per-unit
+  timers (the volley reload) are fine; what's out is open-ended resource
+  management — fatigue bars, charge-up meters, anything that accumulates
+  and must be managed. If a burst-vs-sustain distinction is needed
+  somewhere, the lance is the pattern: scale off state the sim already
+  computes (current speed, distance, cover).
+- **No charge morale shock — fear comes only from damage taken.** A
+  full-gallop lance impact deals no bonus fear: the burst of damage already
+  drains the victim's morale through the normal hit path, so the shock is
+  physical, same as every other weapon. No fear multiplier riding
+  `speedScale`, now or later — recorded here so nobody "improves" it after
+  phase 4.
+- **Armor protects the body, not the nerve.** Heavy armor does not scale
+  `HIT_FEAR` or any other morale input. Protection lives entirely in
+  `WEAPON_VS_ARMOR`, and since fear follows damage taken, armor already
+  shields morale *indirectly* — an explicit armor-fear scale would
+  double-count, exactly what §1 forbids for damage. If heavier archetypes
+  should hold longer than their hp advantage explains, that's a `discipline`
+  default (below), not an armor mechanic.
 - **Discipline is a unit property, not an archetype property** — designed
   for now, wired later. Morale behavior must not be hard-coded to archetype
   tables: the future wants squad variants like a "berserker" blade-infantry
@@ -351,8 +389,9 @@ tooltip, it doesn't belong here.
 - Every new per-unit stat read is a Uint8/Float32 index into a small table —
   same shape as `TYPE_*` today. The weapon matrix flattens to one
   `Float32Array(WEAPON_COUNT × ARMOR_COUNT)`.
-- Discrete strikes are *cheaper* than continuous DPS (most units are on
-  cooldown most ticks; the scan already ran anyway).
+- Melee damage stays the single accumulate line it is today; the new factors
+  are table reads and multiplies. No new per-tick cost, no new per-unit
+  combat state.
 - No new RNG anywhere in combat → seed determinism untouched.
 - The one real hot-loop risk is the polearm scan widening (§3); measure it.
 - **Balance harness — plain node, no browser.** The sim is DOM-free by
@@ -386,17 +425,17 @@ tooltip, it doesn't belong here.
    derive speed/hp from the new tables tuned to match today's values exactly.
    Renderer re-keys bins. Pure refactor, verifiable by seed-identical replay… 
    (near-identical: hp/speed rounding may drift a battle — check visually).
-2. **Discrete strikes + weapon matrix — lands together with the balance
-   harness.** Replace the melee DPS line with the strike loop,
-   `WEAPON_VS_ARMOR`, polearm reach profile + standoff, widened polearm
-   scan. Delete `DMG_MULT`/`TYPE_ARMOR`/`TYPE_MELEE_DPS`. `test/balance.js`
+2. **Weapon matrix + profiles — lands together with the balance
+   harness.** Melee stays `dps × dt`; swap `DMG_MULT`/`TYPE_ARMOR`/
+   `TYPE_MELEE_DPS` for `WEAPON_DPS` × `WEAPON_VS_ARMOR`, add the polearm
+   reach profile + standoff and the widened polearm scan. `test/balance.js`
    + the `npm run balance` scripts (§9) ship in the same change and gate it:
    pike > cavalry > archers > pike must hold in the matrix runs, not just
    look right on screen. Targeting of routing units stays as today: valid
    victims who never strike back (§8).
-3. **Ranged split.** Parametrize `archery.js` per weapon; longbow stationary
-   gate; shooter-side cover; `MOUNT_ARROW_MULT`. Add skirmishers to the
-   roster.
+3. **Ranged split.** Parametrize `archery.js` per weapon; longbow
+   stand-still reset gate (§4); shooter-side cover; `MOUNT_ARROW_MULT`. Add
+   skirmishers to the roster.
 4. **Lance.** Speed-scaled lance damage off real per-tick displacement (no
    stored state); knights re-armed from generic melee to LANCE. The old
    charge-mechanic tuning reference lives at `585a113`.
@@ -419,25 +458,32 @@ world.js (4), terrain.js + renderer.js (5), world.js spawn + config (6).
 
 ## 11. Open questions
 
-1. **Longbow interrupted mid-reload: pause or reset?** Plan says pause
-   (cooldown just doesn't tick while moving). Reset is harsher and makes
-   longbow repositioning a bigger commitment. → §4
-2. **Armor & morale?** Should heavy armor also resist morale damage (HIT_FEAR
-   scaled), or is protection-via-matrix enough? Plan: leave morale untouched
-   for now; the per-unit `discipline` scalar (§8) is the cleaner home for
-   this if wanted (heavier archetypes default to higher discipline).
-3. **Cost/budget armies in phase 6 — or sooner?** Equal-count matrix runs
-   are fine for early tuning; costs are just a config number if we want them
-   earlier.
-4. **Charge morale shock:** should a full-gallop lance impact also deal bonus
-   fear (the old mechanic's ghost)? Plan: defer, revisit after phase 4 play.
+None — all resolved:
 
-Resolved: polearm in brush is a **penalty** (longer cooldown and/or lower
+- **Longbow interrupted mid-reload: reset**, not pause. Moving restarts the
+  full reload, so repositioning a longbow line is a real commitment and
+  committing them to ground early is rewarded (§4).
+- **Armor does not resist morale damage.** Protection lives entirely in
+  `WEAPON_VS_ARMOR`; fear already follows damage taken, so armor shields
+  morale indirectly and an explicit `HIT_FEAR` scale would double-count.
+  Archetype-level morale differences, if ever wanted, are `discipline`
+  defaults (§8).
+- **Cost/budget armies land in phase 6 as planned.** Equal-count matrix runs
+  are sufficient for tuning phases 2–4; cost only becomes meaningful when
+  the roster widens, which is phase 6 anyway (§7, §10).
+- **No charge morale shock — ever.** A gallop lance impact deals no bonus
+  fear; the damage burst drains morale through the normal hit path like
+  every other weapon. Settled as a principle in §8, not deferred.
+
+Previously resolved: polearm in brush is a **penalty** (longer cooldown and/or lower
 damage — the todo's "and/or dmg" meant *decrease*); the balance harness lands
 with phase 2, plain node, no browser automation; **no pursuit damage
 modifier** — routers stay attackable, and the pursuit advantage is simply
 that they never strike back, already true via the ACTIVE gate (§8); **no
 fatigue** — stats are sustainable rates by definition (§8); **no charge
 meter** — lance damage scales off current actual speed, no stored state
-(§3); discipline is a per-unit scalar decoupled from archetype, reserved now
-and wired when squad variants arrive (§8).
+(§3); **melee stays continuous `dps × dt`** — discrete cooldown strikes
+dropped, since single-targeting (already present) is what makes flanking
+emergent, and cooldowns belong only to volleys (§3); discipline is a
+per-unit scalar decoupled from archetype, reserved now and wired when squad
+variants arrive (§8).
