@@ -1,6 +1,6 @@
 # Plan: unit rework — armor × weapon axes
 
-Status: **in implementation** — phases 1–3 landed (§10). Numbers are starting
+Status: **in implementation** — phases 1–4 landed (§10). Numbers are starting
 points, not balance.
 Source notes: `todo` (repo root) + README backlog (bow classes vs. armor tiers,
 cavalry charges, archer fire discipline).
@@ -117,16 +117,19 @@ WEAPON_VS_ARMOR = [
   /* POLEARM */        [  1.0,      1.0,       1.0  ],  // power is in reach, not matchup
   /* BOW     */        [  1.0,      0.55,      0.15 ],  // shortbow: armor shrugs it off
   /* LONGBOW */        [  1.3,      1.0,       0.5  ],  // defeats mail, not plate
-  /* LANCE   */        [  1.2,      1.0,       0.9  ],  // × speed bonus, see §3
+  /* LANCE   */        [  1.2,      0.85,      0.75 ],  // × speed bonus, see §3
+                                                        // (1.0/0.9 drafts cut in the
+                                                        // phase-4 tune, §10)
 ]
 
 MOUNT_ARROW_MULT = 1.4   // BOW/LONGBOW damage vs mounted units below HEAVY:
                          // unbarded horses die to massed arrows (README backlog)
 
-POLEARM_VS_MOUNT = 1.5   // polearm melee damage vs mounted, any tier: a set
+POLEARM_VS_MOUNT = 1.75  // polearm melee damage vs mounted, any tier: a set
                          // pike stops the horse itself — barding blocks
                          // arrows, not a braced point (melee analog of
-                         // MOUNT_ARROW_MULT)
+                         // MOUNT_ARROW_MULT). 1.5 through phase 3; raised in
+                         // the phase-4 tune against lance knights (§10)
 ```
 
 Sanity check vs. today: pike 14 dps → polearm 18 dps *at full reach*, near
@@ -212,9 +215,16 @@ pace, the real displacement, *not* the capped raw steering velocity whose
 ceiling killed the old charge mechanic (README backlog):
 
 ```
-speedFrac  = travel / maxTravel(unit)         // 0 standing … 1 at full gallop
+speedFrac  = (travel / maxTravel(unit))²      // 0 standing … 1 at full gallop
 speedScale = 1 + speedFrac × LANCE_SPEED_MULT
 ```
+
+The scale is **quadratic** in speed — impact energy goes as v². A linear
+draft broke pike > cavalry in the phase-4 tune: inside a block each kill
+opens `FORM_SPACING` of ground to the next victim, and that mini-sprint
+re-arms a linear lance into a sustained ~5× grind (knights 2126/771 over
+pikes). Squaring makes the kill-chain sprints pay little while the true
+open-field run-up still pays in full.
 
 - The run-up falls out of the movement model for free: from a standstill,
   damping takes on the order of a second of open ground to ease a knight up
@@ -520,8 +530,29 @@ tooltip, it doesn't belong here.
    pike". Skirmishers lose every static matchup and beat only marching
    longbowmen (3878/3046) — their value is volleying on the move; cost
    arrives phase 6.
-4. **Lance.** Speed-scaled lance damage off real per-tick displacement (no
-   stored state); knights re-armed from generic melee to LANCE. The old
+4. **Lance.** ✅ *Done.* Knights re-armed BLADE → LANCE; the speed scale
+   reads the striker's actual displacement this tick (terrain, pace, and
+   water clamps included), normalized by its own full gallop — the
+   equilibrium of the steering recurrence × pace — and applied as a *late
+   add*: combat runs before movement in the unit loop, so the strike's base
+   rate is parked and folded into `dmg[]` after the position writes (the
+   accumulator resolves after the full pass, so ordering is unaffected; the
+   same travel read drives the longbow stand-still gate). What the harness
+   taught: the plan's linear speedFrac broke the triangle — knights beat
+   pikes 2126/771 off the kill-chain sprint (§3) — fixed by squaring the
+   frac (impact energy ∝ v²) plus lance vs ARMORED/HEAVY 1.0/0.9 →
+   0.85/0.75 and `POLEARM_VS_MOUNT` 1.5 → 1.75, strengthening the pike-side
+   counter as phase 2 did rather than flattening the burst.
+   `LANCE_SPEED_MULT` stays 8: ~61 hp/s vs mail at gallop contact for the
+   ticks it lasts, 6.8 standing. Gates (collide): pikemen > knights
+   1573/885, knights > longbowmen 4877/307, knights > skirmishers 4993/301;
+   standard battles stay varied and healthy. One new defend-mode verdict,
+   accepted as emergent history rather than tuned away: *planted* pikemen
+   now lose to knights (1244/2344, was 2782/1755 against blade knights) —
+   parked squads never counter-press, only the surface ranks fight, and
+   knights rout, rally, and return with a fresh run-up each wave — while
+   *marching* pike blocks still crush cavalry. That is Swiss doctrine (the
+   attack is the defense) falling out of the movement model. The old
    charge-mechanic tuning reference lives at `585a113`.
 5. **Terrain.** `ground` grid with mud + generation + renderer bake + speed
    effect; polearm brush cooldown.

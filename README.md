@@ -48,7 +48,11 @@ these runs, not by eyeballing the screen.
   the point of the pike, almost none adjacent, holding standoff instead of
   pressing — so pike blocks beat cavalry through formation depth and set
   points that kill the horses themselves, while blades that burrow into the
-  ranks win the press. The rock-paper-scissors
+  ranks win the press. Knights couch **lances** whose damage scales with the
+  square of their actual per-tick travel — no charge button, no meter: a
+  knight arriving at gallop deals ~9× his standing rate for the moments the
+  crash lasts, then the press bleeds his speed and the lance goes nearly
+  dead in the milling. The rock-paper-scissors
   falls out instead of being scripted (`src/sim/world.js`,
   `docs/unit-rework-plan.md`).
 - Massed archery as **area fire** (`src/sim/archery.js`): each volley targets
@@ -236,12 +240,9 @@ order:
   melee your own pikes are winning — belongs to the AI director, not the
   archers; it's a one-line score tweak in `sim/archery.js` when the director
   lands.
-- **Cavalry charges.** An earlier charge mechanic (burst damage + morale shock
-  when a fast-moving knight hit contact, negated by braced pikes) was removed:
-  its raw-velocity trigger never fired after the steering refactor capped
-  stored velocity below the charge threshold, and even before that it only
-  triggered off separation shoves in a packed melee, not an open-field run-up.
-  Pike > cavalry survives via the `DMG_MULT` table. If revived, redesign the
-  trigger around an actual run-up (e.g. ticks spent closing on the target at
-  marching pace or above) rather than instantaneous velocity; the old tuning
-  lives in git history (`585a113` and earlier).
+- **Cavalry charges** — landed with the unit rework (phase 4), redesigned as
+  the plan's backlog note prescribed: lance damage scales with the square of
+  the knight's *actual per-tick displacement* (the real travel after terrain
+  and pace), so the run-up requirement is the movement model itself rather
+  than a trigger on capped instantaneous velocity, which is what killed the
+  original mechanic (its tuning lives at `585a113` and earlier).

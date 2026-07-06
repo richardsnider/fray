@@ -21,12 +21,13 @@ import {
   ARCH_SPEED, ARCH_ARMOR, ARCH_WEAPON, ARCH_MOUNTED, ARCH_MELEE_DPS, Weapon,
   WEAPON_RANGE, WEAPON_DPS, WEAPON_VS_ARMOR,
   POLEARM_MIN, POLEARM_FULL_FRAC, STANDOFF_FRAC, POLEARM_VS_MOUNT,
-  BowClass, VOLLEY_RELOAD, LONGBOW_STILL,
+  BowClass, VOLLEY_RELOAD, LONGBOW_STILL, LANCE_SPEED_MULT,
 } from '../config.js';
 
 const { ACTIVE, ROUTING, DEAD } = U.STATE;
 const POLEARM = Weapon.POLEARM;
 const LONGBOW = Weapon.LONGBOW;
+const LANCE = Weapon.LANCE;
 const LONGBOW_RELOAD = VOLLEY_RELOAD[BowClass.LONGBOW];
 
 // Per-weapon derived tables, computed once at load. Bows never melee (dps 0),
@@ -170,6 +171,10 @@ export const step = (dt) => {
   const { cell, cols, rows, heads, next } = grid;
   const scanR2 = SEP_RADIUS * SEP_RADIUS;   // separation / awareness radius
   const stillD2 = (LONGBOW_STILL * dt) ** 2; // travel² under which a longbow counts as standing
+  // Full-gallop travel per tick before pace: the equilibrium of the steering
+  // recurrence v ← (v + SEEK_ACCEL·dt)·DAMPING, carried over one tick on flat
+  // open ground (tf = 1). × ARCH_SPEED it normalizes the lance's speedFrac.
+  const gallop = SEEK_ACCEL * dt * dt * (DAMPING / (1 - DAMPING));
 
   for (let i = 0; i < count; i++) {
     const xi = U.x[i];
@@ -243,6 +248,7 @@ export const step = (dt) => {
     // burrows into the ranks faces blunted points. Bows have melee dps 0 and
     // never engage (MELEE_R2 = 0); their fight is sim/archery.js.
     let engaged = false;
+    let lanceDmg = 0;   // a lance strike waits on this tick's travel, applied below
     if (statei === ACTIVE && ceIdx !== -1 && ceD2 <= MELEE_R2[weapi]) {
       // Attacking downhill (higher ground than the target) hits harder.
       const dh = T.elevation[tcell] - T.elevation[T.cellOf(U.x[ceIdx], U.y[ceIdx])];
@@ -255,9 +261,13 @@ export const step = (dt) => {
           * (ARCH_MOUNTED[ta] ? POLEARM_VS_MOUNT : 1)
         : 1;
       // ARCH_MELEE_DPS is the weapon rate with the mount interaction baked in
-      // (a rider's polearm keeps reach but can't brace — config.js).
-      dmg[ceIdx] += ARCH_MELEE_DPS[archi] * dt * bonus * prof
+      // (a rider's polearm keeps reach but can't brace — config.js). The lance
+      // scales with the striker's travel, known only after the movement below —
+      // park its base rate for the late add; dmg[] resolves after the full
+      // pass, so a late accumulate changes nothing else.
+      const d = ARCH_MELEE_DPS[archi] * dt * bonus * prof
         * WEAPON_VS_ARMOR[weapi][ARCH_ARMOR[ta]];
+      weapi === LANCE ? (lanceDmg = d) : (dmg[ceIdx] += d);
       engaged = true;
     }
 
@@ -363,6 +373,21 @@ export const step = (dt) => {
 
     U.x[i] = clamp(nx, 0, W - 1);
     U.y[i] = clamp(ny, 0, H - 1);
+
+    // --- lance: the parked strike, scaled by this tick's actual travel --------
+    // speedFrac normalizes the real displacement (terrain, pace, water clamps
+    // and all) by this unit's own full gallop: 0 standing … 1 at open-field
+    // charge. The scale is *quadratic* in speed — impact energy goes as v² —
+    // so the short sprints of a melee kill-chain (each dead pikeman opens a
+    // few units to the next, briefly re-arming the lance) score little, and
+    // only a real run-up pays in full. Contact at gallop is a self-limiting
+    // burst: the press bleeds the speed within a few ticks, milling in a
+    // melee scores near the naked standing rate.
+    if (lanceDmg > 0) {
+      const ldx = U.x[i] - xi, ldy = U.y[i] - yi;
+      const frac = clamp01((ldx * ldx + ldy * ldy) / (gallop * ARCH_SPEED[archi]) ** 2);
+      dmg[ceIdx] += lanceDmg * (1 + frac * LANCE_SPEED_MULT);
+    }
 
     // --- reload (used by bows only; sim/archery.js fires when it hits 0) ------
     // Ticks down normally, except a longbow's counts only while standing: any

@@ -44,9 +44,17 @@ export const FLEE_SPEED_MULT = 1.6;     // routing units run faster than they ma
 export const POLEARM_MIN = 0.05;        // damage fraction when adjacent
 export const POLEARM_FULL_FRAC = 0.75;  // fraction of reach where the profile hits full rate
 export const STANDOFF_FRAC = 0.7;       // fraction of reach a polearm holds at while engaged
-export const POLEARM_VS_MOUNT = 1.5;    // polearm damage multiplier vs mounted: a set pike
+export const POLEARM_VS_MOUNT = 1.75;   // polearm damage multiplier vs mounted: a set pike
                                         // stops the horse — a big target barding can't save
                                         // from a braced point (melee analog of MOUNT_ARROW_MULT)
+
+// Lance profile (docs/unit-rework-plan.md §3): damage scales with the
+// striker's actual per-tick travel — the real displacement after terrain and
+// pace, not the capped steering velocity — so the run-up is the movement model
+// itself: a knight arriving at gallop deals several times the standing rate
+// for the few ticks before the press bleeds his speed, and one milling in a
+// melee holds the worst weapon in the game. No meter, no stored state.
+export const LANCE_SPEED_MULT = 8;      // damage multiplier at full gallop: rate × (1 + frac × this)
 
 // --- Archetypes: armor × weapon axes ------------------------------------------
 // A unit is an armor tier × a weapon class × a mount flag (see
@@ -69,15 +77,15 @@ const MOUNT_SPEED  = 1.8;                    // pace multiplier when mounted
 // Weapons own damage, reach, and how each interacts with armor. Melee is a
 // continuous rate (hp/sec against the closest enemy — plan §3); bows are
 // volley events (VOLLEY_* below + sim/archery.js) with dps 0 here, and their
-// WEAPON_RANGE entry is volley range. Lance reads as generic melee until
-// phase 4's speed scale.
+// WEAPON_RANGE entry is volley range.
 // Weapon:                  BLADE BLUNT POLEARM BOW LONGBOW LANCE
 export const WEAPON_RANGE = [   5,    5,     11,  70,   110,    6 ]; // reach (world units)
 export const WEAPON_DPS   = [  16,   14,     18,   0,     0,    8 ]; // melee hp/sec; 0 = doesn't melee
 // Polearm 18 is a braced foot pike at full reach — the deadliest melee in the
 // game (and near zero adjacent, see the reach profile). Lance 8 is the rate
 // *standing*: deliberately below even an unbraced mounted polearm, because a
-// lance is nothing without speed — phase 4's speed scale is its whole value.
+// lance is nothing without speed — the LANCE_SPEED_MULT scale is its whole
+// value (~72 hp/sec for the moments a gallop contact lasts).
 
 // Weapon-vs-armor damage multiplier — the whole protection story, applied to
 // melee and to arrow impacts. Replaces the old RPS type matrix: matchups fall
@@ -89,7 +97,7 @@ export const WEAPON_VS_ARMOR = [
   /* POLEARM */             [    1.0,      1.0,       1.0  ], // power is in reach, not matchup
   /* BOW     */             [    1.0,      0.55,      0.15 ], // shortbow: armor shrugs it off
   /* LONGBOW */             [    1.3,      1.0,       0.5  ], // defeats mail, not plate
-  /* LANCE   */             [    1.2,      1.0,       0.9  ], // × speed scale (phase 4)
+  /* LANCE   */             [    1.2,      0.85,      0.75 ], // × the speed scale (LANCE_SPEED_MULT)
 ];
 
 // Bow classes — both fire beaten-zone volleys (sim/archery.js); the class sets
@@ -109,10 +117,9 @@ export const LONGBOW_STILL = 8;         // speed (world units/sec) that still co
 export const MOUNT_ARROW_MULT = 1.4;    // arrow damage vs mounted below HEAVY armor: unbarded
                                         // horses die to massed arrows; barding shrugs them off
 
-// The roster: adding an archetype is one line. Knights carry a generic BLADE
-// until the lance mechanic lands (plan phase 4).
+// The roster: adding an archetype is one line.
 export const ARCHETYPES = [
-  { name: 'knights',     armor: Armor.HEAVY,   weapon: Weapon.BLADE,   mounted: 1 },
+  { name: 'knights',     armor: Armor.HEAVY,   weapon: Weapon.LANCE,   mounted: 1 },
   { name: 'longbowmen',  armor: Armor.NONE,    weapon: Weapon.LONGBOW, mounted: 0 },
   { name: 'pikemen',     armor: Armor.ARMORED, weapon: Weapon.POLEARM, mounted: 0 },
   { name: 'skirmishers', armor: Armor.NONE,    weapon: Weapon.BOW,     mounted: 0 },
