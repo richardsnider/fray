@@ -28,6 +28,9 @@ import {
 } from '../config.js';
 
 const TERRAIN_SCALE = 2;   // bake texels per world unit; 2 → crisp at max zoom. One-time cost (~1.5s).
+const CANOPY_SCALE = 1;    // canopy-layer texels per world unit; 1 keeps the second world-sized canvas at ~25 MB (2 would double the ~100 MB ground bake) and organic stipple reads fine chunky
+const CANOPY_ALPHA = 0.62; // max canopy opacity — troops under trees dim and green but never vanish
+const CANOPY_SHADOW = 0.45; // fraction of the old full canopy darkening kept in the ground layer as tree shadow
 const TERRAIN_LIFT = 2; // global brightness on the baked palette; 1 = the moody baseline
 const HILLSHADE = 7;       // strength of slope shading
 const LX = -0.7, LY = -0.7; // light direction (from top-left)
@@ -246,7 +249,7 @@ export const create = (canvas) => {
   ctx.imageSmoothingEnabled = false; // crisp pixel scaling
   const r = {
     canvas, ctx, width: 0, height: 0, styles: buildStyles(),
-    terrain: null, tctx: null, vignette: null,
+    terrain: null, tctx: null, canopy: null, vignette: null,
     bins: createBins(), binN: new Int32Array(BIN_COUNT),
     sprites: new Array(BIN_COUNT), spriteZoom: 0,
     selMark: new Int16Array(MAX_UNITS * 2), // screen (x,y) of visible selected units
@@ -294,16 +297,38 @@ const buildVignette = (r) => {
 // Quantize a channel already offset by the Bayer threshold.
 const qd = (v) => clamp255(Math.round(v / QUANT) * QUANT);
 
+// Blank world-sized RGBA layer at `scale` texels per world unit, ready to fill.
+const createLayer = (scale) => {
+  const off = document.createElement('canvas');
+  off.width = Math.ceil(WORLD_W * scale);
+  off.height = Math.ceil(WORLD_H * scale);
+  const octx = off.getContext('2d');
+  return { off, octx, img: octx.createImageData(off.width, off.height) };
+};
+
+// One canopy texel: the two-tone forest color (shadowed trunks → lit leaves)
+// and the crisp dither-edged coverage k at a world point. Shared by the
+// ground-shadow and over-layer bakes so the two always agree per texel.
+const canopyTexel = (wx, wy, cov) => {
+  const clump = T.noiseAt(wx * CANOPY_FREQ, wy * CANOPY_FREQ);              // coarse clumps
+  const leaf = T.noiseAt(wx * CANOPY_FREQ * 3.7 + 19, wy * CANOPY_FREQ * 3.7 + 7); // fine stipple
+  const canopy = clump * 0.6 + leaf * 0.4;
+  return {
+    // Crisp onset + canopy-dithered edge → a stippled tree-line, not a blob.
+    k: clamp01(cov * 1.7 - 0.15 - (1 - canopy) * 0.4) * 0.96,
+    // Near-black forest green: the darkest thing on the map, unmistakable.
+    fr: lerp(10, 30, canopy),
+    fg: lerp(20, 52, canopy),
+    fb: lerp(12, 28, canopy),
+  };
+};
+
 // Bake the terrain once into an offscreen canvas at TERRAIN_SCALE resolution,
 // sampling the shared terrain grids so sim and visuals never disagree.
 export const buildTerrain = (r) => {
-  const tw = Math.ceil(WORLD_W * TERRAIN_SCALE);
-  const th = Math.ceil(WORLD_H * TERRAIN_SCALE);
-  const off = document.createElement('canvas');
-  off.width = tw;
-  off.height = th;
-  const octx = off.getContext('2d');
-  const img = octx.createImageData(tw, th);
+  const { off, octx, img } = createLayer(TERRAIN_SCALE);
+  const tw = off.width;
+  const th = off.height;
   const data = img.data;
   const d = 8; // finite-difference step (world units) for hillshade
   for (let py = 0; py < th; py++) {
@@ -349,23 +374,17 @@ export const buildTerrain = (r) => {
           * (1 + (det - 0.5) * DETAIL_AMP);
         r0 *= shade; g0 *= shade; b0 *= shade;
 
-        // Forest overlay: a textured two-tone canopy (shadowed trunks → lit
-        // leaves) whose edge is dithered by the canopy noise, so brush reads as
-        // a stippled tree-line instead of a soft dark blob.
+        // Tree shadow: a softened cut of the canopy darkening stays in the
+        // ground layer, so the forest floor reads dim under the trees. The
+        // canopy itself lives on the over-layer canvas (buildCanopy) blitted
+        // above the units, which is what makes troops in brush sit *under* it.
         const cov = T.coverBilinear(wx, wy);
         if (cov > 0.002) {
-          const clump = T.noiseAt(wx * CANOPY_FREQ, wy * CANOPY_FREQ);              // coarse clumps
-          const leaf = T.noiseAt(wx * CANOPY_FREQ * 3.7 + 19, wy * CANOPY_FREQ * 3.7 + 7); // fine stipple
-          const canopy = clump * 0.6 + leaf * 0.4;
-          // Near-black forest green: the darkest thing on the map, unmistakable.
-          const fr = lerp(10, 30, canopy);
-          const fg = lerp(20, 52, canopy);
-          const fb = lerp(12, 28, canopy);
-          // Crisp onset + canopy-dithered edge → a stippled tree-line, not a blob.
-          const k = clamp01(cov * 1.7 - 0.15 - (1 - canopy) * 0.4) * 0.96;
-          r0 = lerp(r0, fr, k);
-          g0 = lerp(g0, fg, k);
-          b0 = lerp(b0, fb, k);
+          const { k, fr, fg, fb } = canopyTexel(wx, wy, cov);
+          const ks = k * CANOPY_SHADOW;
+          r0 = lerp(r0, fr, ks);
+          g0 = lerp(g0, fg, ks);
+          b0 = lerp(b0, fb, ks);
         }
       }
 
@@ -380,6 +399,40 @@ export const buildTerrain = (r) => {
   octx.putImageData(img, 0, 0);
   r.terrain = off;
   r.tctx = octx; // kept for stamping blood decals into the bake
+  buildCanopy(r);
+};
+
+// Bake the canopy over-layer: the same two-tone forest texture as the old
+// in-ground canopy, but on its own semi-transparent canvas blitted *above* the
+// units — troops in brush read as under the trees, dimmed to at most
+// CANOPY_ALPHA but always visible. Alpha rides the same Bayer quantizer as the
+// colors, so the translucency dithers into crisp leafy grain instead of a soft
+// dark wash. Same one-time-bake / per-frame-blit split as the ground.
+const buildCanopy = (r) => {
+  const { off, octx, img } = createLayer(CANOPY_SCALE);
+  const tw = off.width;
+  const th = off.height;
+  const data = img.data;
+  for (let py = 0; py < th; py++) {
+    for (let px = 0; px < tw; px++) {
+      const wx = px / CANOPY_SCALE;
+      const wy = py / CANOPY_SCALE;
+      const cov = T.coverBilinear(wx, wy);
+      // Skip open ground and water (cover shouldn't exist there, but the ground
+      // bake never drew canopy over water either — keep the layers agreeing).
+      if (cov <= 0.002 || T.elevBilinear(wx, wy) < WATER_LEVEL) continue;
+      const { k, fr, fg, fb } = canopyTexel(wx, wy, cov);
+      if (k <= 0) continue;
+      const i = (py * tw + px) * 4;
+      const dth = (BAYER4[(py & 3) * 4 + (px & 3)] / 16 - 0.5) * QUANT;
+      data[i] = qd(fr * TERRAIN_LIFT + dth);
+      data[i + 1] = qd(fg * TERRAIN_LIFT + dth);
+      data[i + 2] = qd(fb * TERRAIN_LIFT + dth);
+      data[i + 3] = qd(k * CANOPY_ALPHA * 255 + dth);
+    }
+  }
+  octx.putImageData(img, 0, 0);
+  r.canopy = off;
 };
 
 // Fold pending deaths into the baked terrain as small blood splats, then reset
@@ -544,6 +597,17 @@ export const render = (r, alpha, cam, selBox = null) => {
     const bin = bins[b];
     for (let k = 0; k < n; k += 2) ctx.drawImage(c, bin[k] - ax, bin[k + 1] - ay);
   }
+
+  // --- canopy over-layer: tree cover blitted above the units ------------------
+  // Troops in brush sit under the trees — dimmed, half-hidden, still visible
+  // (CANOPY_ALPHA). Player-facing overlays (flags, arrows, the selection box)
+  // stay above it; selection rings ride under it with their units.
+  const C = CANOPY_SCALE;
+  ctx.drawImage(
+    r.canopy,
+    cam.x * C, cam.y * C, viewWorldW(cam) * C, viewWorldH(cam) * C,
+    0, 0, w, h,
+  );
 
   // --- overlays: rally flags, volleys in the air, the selection box, vignette --
   drawRallies(r, cam);

@@ -40,6 +40,11 @@ The game itself has **zero runtime dependencies**. See package.json for dev scri
   flight delay on whoever is standing there — friend or foe — so units can
   walk out from under a volley and arrows into a melee cut both ways.
 - Melee combat, morale, and routing with panic contagion (`src/sim/world.js`).
+- Layered rendering: the ground bake sits under the units and a semi-transparent
+  dithered **canopy over-layer** sits above them (`src/render/renderer.js`), so
+  troops in brush march *under* the trees — dimmed and half-hidden, never
+  invisible. Future overhead structures (roofs, wall-walks) belong to the same
+  over-layer.
 - Camera over a fixed world larger than the screen (`src/render/camera.js`).
 - Terrain grid (elevation/water/brush) that feeds both the sim and the renderer
   (`src/sim/terrain.js`).
@@ -83,7 +88,7 @@ src/
     world.js         steering, combat, morale, rally-point marching
   render/
     camera.js        viewport: world<->screen transform, pan/zoom, clamping
-    renderer.js      Canvas drawing (terrain blit + culled units)
+    renderer.js      Canvas drawing (terrain blit + culled units + canopy over-layer)
     flag.js          rally-flag geometry shared by drawing + click hit-testing
   input/
     input.js         player command layer
