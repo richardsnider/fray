@@ -8,6 +8,7 @@
 
 import * as U from './units.js';
 import * as Rally from './rally.js';
+import * as Formation from './formation.js';
 import { UnitType } from '../config.js';
 
 const DEAD = U.STATE.DEAD;
@@ -60,18 +61,25 @@ export const selectByRally = (id) => {
 // units keep marching to their rally, so they engage enemies met en route.
 // fallow-ignore-next-line unused-export
 export const commandSelected = (x, y) => {
-  let anySel = false;
-  for (let i = 0; i < U.count && !anySel; i++) anySel = liveSelected(i);
-  if (!anySel) return;
+  // Selection head count + centroid in one pass: the centroid seeds a fresh
+  // flag's position, so the facing Rally.move derives from the displacement
+  // points from where the troops stand toward the ordered point.
+  let n = 0, cx = 0, cy = 0;
+  for (let i = 0; i < U.count; i++)
+    liveSelected(i) && (n++, cx += U.x[i], cy += U.y[i]);
+  if (n === 0) return;
 
   // Reuse the flag the selection came from if it still exists, else mint one;
   // remember it so the next command to this same selection drags it along.
-  const targetId = commandRally >= 0 && Rally.byId(commandRally) ? commandRally : Rally.mint(x, y, 0);
+  const targetId = commandRally >= 0 && Rally.byId(commandRally) ? commandRally : Rally.mint(cx / n, cy / n, 0);
   commandRally = targetId;
 
   Rally.move(targetId, x, y);
   for (let i = 0; i < U.count; i++) liveSelected(i) && (U.rallyId[i] = targetId);
   Rally.prune();
+  // Deal the (possibly re-composed) following its formation slots right away —
+  // the slow cadence in world.js would leave it balling for up to REFORM_TICKS.
+  Formation.reassign(Rally.byId(targetId));
 };
 
 // Count selected live units by type for the HUD. Recomputed on demand so it

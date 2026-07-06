@@ -79,8 +79,25 @@ export const ARMY_MIX = [0.20, 0.30, 0.50];
 // pike, a body of archers, a squadron of horse) rather than one intermixed soup,
 // so formations read as coherent groups. A squad is ~SQUAD_SIZE units scattered
 // in a SQUAD_RADIUS disk around a random deploy point in the army's zone.
-export const SQUAD_SIZE = 300;          // units per single-type cluster
+export const SQUAD_SIZE = 500;          // units per single-type cluster
 export const SQUAD_RADIUS = 70;         // world-unit radius a squad scatters over
+
+// --- Formations ---------------------------------------------------------------
+// Each rally flag carries a formation type; its followers hold slots in a
+// rank-and-file grid oriented to the flag's facing (sim/formation.js), so a
+// squad settles into ranks instead of a ball. Width is cols ≈ sqrt(n · aspect)
+// — aspect is the block's width:depth ratio. Spacing is the slot pitch in world
+// units: keep it ≥ SEP_RADIUS so separation goes quiet in a formed-up squad.
+// Spacing 0 means unslotted — every follower seeks the bare flag point (the old
+// clump, kept as FLUID for a march that prioritizes flow over order). Nothing
+// switches formations yet; the type exists so the player UI and the AI director
+// can (wedge etc. add a slot-layout branch in sim/formation.js).
+export const Formation = { BLOCK: 0, LINE: 1, LOOSE: 2, FLUID: 3 };
+//                             BLOCK LINE LOOSE FLUID
+export const FORM_ASPECT   = [  2.0, 8.0,  2.0,    0 ];
+export const FORM_SPACING  = [    8,   8,   14,    0 ];
+export const REFORM_TICKS = 66;         // ~2 s between slot re-deals: closes ranks over casualty gaps
+export const FACING_EPS = 4;            // min flag displacement (world units) before facing re-derives
 
 // Morale / routing. Morale is 0..MORALE_MAX; below ROUT it breaks, and a broken
 // unit must recover past RALLY to re-form.

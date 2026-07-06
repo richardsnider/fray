@@ -6,6 +6,7 @@ import * as T from './terrain.js';
 import * as Grid from './spatialGrid.js';
 import * as Archery from './archery.js';
 import * as Rally from './rally.js';
+import * as Formation from './formation.js';
 import * as Command from './command.js';
 import { mulberry32 } from './rng.js';
 import { clamp, clampIndex, mag } from '../util/math.js';
@@ -16,7 +17,7 @@ import {
   MORALE_MAX, ROUT_THRESHOLD, RALLY_THRESHOLD, MORALE_REGEN,
   FEAR_OUTNUMBERED, FEAR_PANIC, HIT_FEAR,
   SLOPE_SPEED, COVER_SLOW, HEIGHT_DMG, WATER_LOOK, WATER_AVOID,
-  UNIT_TYPE_COUNT, ARMY_MIX, SQUAD_SIZE, SQUAD_RADIUS,
+  UNIT_TYPE_COUNT, ARMY_MIX, SQUAD_SIZE, SQUAD_RADIUS, REFORM_TICKS,
   TYPE_SPEED_MULT, TYPE_MELEE_DPS, TYPE_ARMOR, DMG_MULT,
 } from '../config.js';
 
@@ -55,6 +56,7 @@ export const init = (seed = 0) => {
   Command.reset();
   U.reset();
   spawnArmies();
+  Formation.reassignAll(); // deal every squad its opening rank-and-file slots
 };
 
 export const getStats = () => stats;
@@ -138,6 +140,11 @@ export const step = (dt) => {
 
   updateStats();
   tick++;
+
+  // Re-deal formation slots on a slow cadence so ranks close over casualty
+  // gaps and slot deals track drifting squads; commands re-deal immediately
+  // (sim/command.js).
+  tick % REFORM_TICKS === 0 && Formation.reassignAll();
 
   Grid.build(grid, count, U.x, U.y);
 
@@ -229,7 +236,9 @@ export const step = (dt) => {
     // speed while separation still applies. The rally is resolved through the
     // unit's flag (rallyId → position, the single source of truth): the squad's
     // spawn objective, or wherever the player last commanded the selection it
-    // belongs to. Enemies met on the way flip it into the engage branch above.
+    // belongs to — refined to the unit's own formation slot when the flag has
+    // dealt ranks (sim/formation.js), so squads form up instead of balling on
+    // the point. Enemies met on the way flip it into the engage branch above.
     let ax = 0, ay = 0;
     let tx = 0, ty = 0, sign = 1, seek = true;
     if (statei === ROUTING) {
@@ -243,7 +252,9 @@ export const step = (dt) => {
       // id coast like a target-less router instead of marching to (0,0).
       const ral = Rally.byId(U.rallyId[i]);
       seek = ral !== undefined;
-      seek && (tx = ral.x, ty = ral.y);
+      seek && (ral.cols > 0
+        ? (tx = Formation.slotX(ral, U.slot[i]), ty = Formation.slotY(ral, U.slot[i]))
+        : (tx = ral.x, ty = ral.y));
     }
     // Unit vector to (or from) the target × SEEK_ACCEL; left at zero when there
     // is no target or the unit is already sitting on the point.

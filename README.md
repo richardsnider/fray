@@ -28,6 +28,10 @@ The game itself has **zero runtime dependencies**. See package.json for dev scri
   queries.
 - Boids-style steering: seek a per-unit rally point + friend-only separation,
   with reactive shoreline avoidance (`src/sim/world.js`).
+- Rank-and-file formations (`src/sim/formation.js`): each rally flag carries a
+  facing and a formation type, and every follower holds a slot in a grid of
+  ranks behind it — squads settle into blocks instead of balls, best-effort
+  (combat and routing override it; slots over water park on the shore).
 - Three unit types — heavy cavalry, longbow archers, pike/melee — with
   data-driven stats and a rock-paper-scissors damage table
   (`src/config.js`, `src/sim/world.js`).
@@ -51,8 +55,9 @@ The terrain is real: **water is impassable** (units slide along shorelines),
 **hills slow the climb and speed the descent**, **brush slows movement**, and
 **attacking downhill hits harder**. Each unit marches toward its own **rally
 point** — its squad's spawn objective, or wherever you last commanded the
-selection it belongs to — steering straight for it while reactively veering off
-any open water ahead. The HUD shows per-team survivors, FPS, zoom, and sim time
+selection it belongs to — steering straight for its own rank-and-file slot in
+the flag's formation while reactively veering off any open water ahead, so an
+arriving squad forms up in a block facing its direction of travel. The HUD shows per-team survivors, FPS, zoom, and sim time
 per frame.
 
 **Controls:** left-drag box-selects your (silver) units · left-click a rally flag
@@ -73,6 +78,7 @@ src/
     archery.js       massed volley fire: beaten-zone aiming + arrow-flight queue
     rng.js           seeded PRNG (mulberry32) so a seed reproduces a battle
     rally.js         rally-flag store — single source of truth for march targets
+    formation.js     rank-and-file slots: deals each flag's followers a place in its block
     command.js       player selection + orders (repoints rally flags)
     world.js         steering, combat, morale, rally-point marching
   render/

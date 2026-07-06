@@ -8,6 +8,8 @@
 // does the same through this module.
 
 import * as U from './units.js';
+import { Formation, FACING_EPS } from '../config.js';
+import { mag } from '../util/math.js';
 
 const DEAD = U.STATE.DEAD;
 
@@ -19,25 +21,37 @@ let nextId = 0;        // monotonic id source; ids stay valid across pruning
 export const getRallies = () => rallies;
 export const byId = (id) => index[id];
 
-// Mint a flag for `team` at (x, y) and return its stable id.
+// Mint a flag for `team` at (x, y) and return its stable id. Facing (fx, fy —
+// a unit vector) defaults toward the enemy side (team 0 deploys left) until
+// move() re-derives it from displacement; `form` is the formation its followers
+// hold, and `cols` the formation's rank width — 0 until sim/formation.js deals
+// slots (0 = unslotted, followers seek the bare flag point).
 export const mint = (x, y, team) => {
   const id = nextId++;
   const label = String.fromCharCode(97 + labelN[team]++);
-  const ral = { id, x: 0, y: 0, team, label };
+  const ral = {
+    id, x: Math.fround(x), y: Math.fround(y), team, label,
+    fx: team === 0 ? 1 : -1, fy: 0, form: Formation.BLOCK, cols: 0,
+  };
   rallies.push(ral);
   index[id] = ral;
-  move(id, x, y);
   return id;
 };
 
 // Move a flag. Coordinates are quantized to f32 (fround): the flag is
 // sim-consumed positional state, and the rest of the sim's positions live in
 // Float32Arrays — keeping the numeric domain uniform keeps battles reproducible
-// independent of where a coordinate happens to be stored.
+// independent of where a coordinate happens to be stored. A meaningful move
+// (beyond FACING_EPS, so nudges don't wheel the whole block) also re-derives
+// the facing, so an ordered squad forms up fronting its direction of travel.
 export const move = (id, x, y) => {
   const ral = index[id];
-  ral.x = Math.fround(x);
-  ral.y = Math.fround(y);
+  const nx = Math.fround(x);
+  const ny = Math.fround(y);
+  const d = mag(nx - ral.x, ny - ral.y);
+  d > FACING_EPS && (ral.fx = Math.fround((nx - ral.x) / d), ral.fy = Math.fround((ny - ral.y) / d));
+  ral.x = nx;
+  ral.y = ny;
 };
 
 // Drop flags no living unit follows any more (emptied squads, moved-off

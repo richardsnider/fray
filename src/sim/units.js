@@ -19,6 +19,7 @@ export const state = new Uint8Array(MAX_UNITS);
 export const selected = new Uint8Array(MAX_UNITS); // 1 if the player has this unit selected
 export const cooldown = new Float32Array(MAX_UNITS); // archer reload timer (see sim/archery.js)
 export const rallyId = new Int32Array(MAX_UNITS);    // id of the rally flag this unit marches to (world.js resolves it)
+export const slot = new Uint16Array(MAX_UNITS);      // rank-and-file slot in the flag's formation (sim/formation.js deals these)
 
 export const STATE = { ACTIVE: 0, ROUTING: 1, DEAD: 2 };
 
@@ -38,6 +39,7 @@ export const spawn = (sx, sy, t, ut, rid = -1) => {
   selected[i] = 0;
   cooldown[i] = 0;
   rallyId[i] = rid;
+  slot[i] = 0;
   return i;
 };
 
@@ -53,6 +55,7 @@ const copyUnit = (dst, src) => {
   selected[dst] = selected[src];
   cooldown[dst] = cooldown[src];
   rallyId[dst] = rallyId[src];
+  slot[dst] = slot[src];
 };
 
 // Remove units flagged DEAD by swapping the last live unit into their slot.
