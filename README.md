@@ -73,8 +73,8 @@ these runs, not by eyeballing the screen.
   invisible. Future overhead structures (roofs, wall-walks) belong to the same
   over-layer.
 - Camera over a fixed world larger than the screen (`src/render/camera.js`).
-- Terrain grid (elevation/water/brush) that feeds both the sim and the renderer
-  (`src/sim/terrain.js`).
+- Terrain grid (elevation, water/mud ground classes, brush) that feeds both
+  the sim and the renderer (`src/sim/terrain.js`).
 
 Two armies (silver vs. red) deploy as clustered single-type squads on a
 3200×2000 world, each squad marching toward its own objective on the enemy's
@@ -84,7 +84,10 @@ friends. Below a threshold a unit **routs** (dim dots) and runs; if it reaches
 safety and recovers, it re-forms.
 
 The terrain is real: **water is impassable** (units slide along shorelines),
-**hills slow the climb and speed the descent**, **brush slows movement**, and
+**hills slow the climb and speed the descent**, **brush slows movement** and
+cramps pikes (dense cover cuts polearm damage — no room to work a 16-foot
+shaft between trees), **mud bogs the march** — shoreline bands and low bog
+patches at half speed, hardest on cavalry — and
 **attacking downhill hits harder**. Each unit marches toward its own **rally
 point** — its squad's spawn objective, or wherever you last commanded the
 selection it belongs to — steering straight for its own rank-and-file slot in
@@ -106,7 +109,7 @@ src/
   sim/               deterministic core — no DOM
     units.js         SoA typed-array unit store
     spatialGrid.js   linked-list uniform grid
-    terrain.js       elevation/water/brush grids + sampling
+    terrain.js       elevation/ground(water|mud)/brush grids + sampling
     archery.js       massed volley fire: beaten-zone aiming + arrow-flight queue
     rng.js           seeded PRNG (mulberry32) so a seed reproduces a battle
     rally.js         rally-flag store — single source of truth for march targets

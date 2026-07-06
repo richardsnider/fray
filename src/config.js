@@ -27,6 +27,9 @@ export const MAX_STEER_SPEED = 45;      // safety ceiling on raw steering veloci
 // sampled by both the sim and the renderer.
 export const TERRAIN_CELL = 16;
 export const WATER_LEVEL = 0.30;        // elevation below this is impassable water
+export const MUD_BAND = 0.05;           // elevation band above the waterline that bakes to mud
+export const MUD_SLOW = 0.5;            // fractional slowdown in mud — like brush but wetter,
+                                        // and no cover benefit: soft ground, nothing to hide in
 export const SLOPE_SPEED = 26;          // uphill slows / downhill speeds movement
 export const COVER_SLOW = 0.45;         // max fractional slowdown in dense brush
 export const HEIGHT_DMG = 2.0;          // downhill melee damage bonus scale
@@ -47,6 +50,8 @@ export const STANDOFF_FRAC = 0.7;       // fraction of reach a polearm holds at 
 export const POLEARM_VS_MOUNT = 1.75;   // polearm damage multiplier vs mounted: a set pike
                                         // stops the horse — a big target barding can't save
                                         // from a braced point (melee analog of MOUNT_ARROW_MULT)
+export const POLEARM_BRUSH = 0.4;       // max fractional polearm dps cut in dense brush:
+                                        // no room to work a 16-foot shaft between trees
 
 // Lance profile (docs/unit-rework-plan.md §3): damage scales with the
 // striker's actual per-tick travel — the real displacement after terrain and

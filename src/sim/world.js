@@ -16,7 +16,8 @@ import {
   MAX_STEER_SPEED, FLEE_SPEED_MULT,
   MORALE_MAX, ROUT_THRESHOLD, RALLY_THRESHOLD, MORALE_REGEN,
   FEAR_OUTNUMBERED, FEAR_PANIC, HIT_FEAR,
-  SLOPE_SPEED, COVER_SLOW, HEIGHT_DMG, WATER_LOOK, WATER_AVOID,
+  SLOPE_SPEED, COVER_SLOW, MUD_SLOW, HEIGHT_DMG, WATER_LOOK, WATER_AVOID,
+  POLEARM_BRUSH,
   ARCH_COUNT, ARMY_MIX, SQUAD_SIZE, SQUAD_RADIUS, REFORM_TICKS,
   ARCH_SPEED, ARCH_ARMOR, ARCH_WEAPON, ARCH_MOUNTED, ARCH_MELEE_DPS, Weapon,
   WEAPON_RANGE, WEAPON_DPS, WEAPON_VS_ARMOR,
@@ -255,10 +256,12 @@ export const step = (dt) => {
       const bonus = clamp(1 + dh * HEIGHT_DMG, 0.5, 1.6);
       const ta = U.arch[ceIdx];
       // Polearm: the reach profile, times the anti-cavalry bonus — a set pike
-      // stops the horse itself, which is why levy pikes stop knights.
+      // stops the horse itself, which is why levy pikes stop knights — cut by
+      // the wielder's brush cover: no room to work a 16-foot shaft in trees.
       const prof = weapi === POLEARM
         ? lerp(POLEARM_MIN, 1, clamp01(Math.sqrt(ceD2) / POLEARM_FULL))
           * (ARCH_MOUNTED[ta] ? POLEARM_VS_MOUNT : 1)
+          * (1 - T.cover[tcell] * POLEARM_BRUSH)
         : 1;
       // ARCH_MELEE_DPS is the weapon rate with the mount interaction baked in
       // (a rider's polearm keeps reach but can't brace — config.js). The lance
@@ -351,8 +354,10 @@ export const step = (dt) => {
     // units flee quicker still.
     const pace = ARCH_SPEED[archi] * (statei === ROUTING ? FLEE_SPEED_MULT : 1);
 
-    // Terrain speed factor: brush slows; uphill slows, downhill speeds up.
-    let tf = 1 - T.cover[tcell] * COVER_SLOW;
+    // Terrain speed factor: brush and mud slow; uphill slows, downhill speeds
+    // up. Both ground penalties are multipliers on a faster base, so they
+    // punish cavalry proportionally hardest — no special cavalry rule needed.
+    let tf = (1 - T.cover[tcell] * COVER_SLOW) * (T.mudAt(xi, yi) ? 1 - MUD_SLOW : 1);
     if (sp > 0.001) {
       const gx = T.elevation[tcy * T.cols + clampIndex(tcx + 1, T.cols)] - T.elevation[tcy * T.cols + clampIndex(tcx - 1, T.cols)];
       const gy = T.elevation[clampIndex(tcy + 1, T.rows) * T.cols + tcx] - T.elevation[clampIndex(tcy - 1, T.rows) * T.cols + tcx];

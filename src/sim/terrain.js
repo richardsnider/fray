@@ -4,8 +4,8 @@
 // fbm. The sim reads it (nearest-cell) for passability/slope/cover; the renderer
 // reads it (bilinear) to bake the ground.
 
-import { WORLD_W, WORLD_H, TERRAIN_CELL, WATER_LEVEL } from '../config.js';
-import { lerp, clamp01, smoothstep } from '../util/math.js';
+import { WORLD_W, WORLD_H, TERRAIN_CELL, WATER_LEVEL, MUD_BAND } from '../config.js';
+import { lerp, clamp01, clampIndex, smoothstep } from '../util/math.js';
 import { cellIndexOf, sampleBilinear } from '../util/grid2d.js';
 
 export const CELL = TERRAIN_CELL;
@@ -14,8 +14,19 @@ export const CELL = TERRAIN_CELL;
 export let cols = 0;
 export let rows = 0;
 export let elevation = new Float32Array(0); // 0..1
-let water = new Uint8Array(0);               // 1 = impassable (internal; use isWaterAt)
+let ground = new Uint8Array(0);              // ground class (internal; use isWaterAt/mudAt)
 export let cover = new Float32Array(0);      // 0..1 brush density
+
+// Ground classes. Water is impassable; mud is passable soft ground (a speed
+// penalty in the sim, dark wet brown in the bake); everything else is land.
+const LAND = 0, WATER = 1, MUD = 2;
+
+// Marsh: beyond the always-wet shoreline band (MUD_BAND), a noise gate pools
+// mud in patches over low ground, so bottomlands break into bog instead of
+// every shore wearing one uniform wet ring. Generation details, so they live
+// here rather than config (like the brush smoothstep bounds below).
+const MARSH_BAND = 3 * MUD_BAND;   // how high above the waterline marsh can pool
+const MARSH_GATE = 0.67;           // marsh-noise threshold for a bog patch
 
 // Folded into the value-noise hash so each seed yields a distinct battlefield.
 let seed = 0;
@@ -26,7 +37,7 @@ export const generate = (s = 0) => {
   rows = Math.ceil(WORLD_H / CELL) + 1;
   const n = cols * rows;
   elevation = new Float32Array(n);
-  water = new Uint8Array(n);
+  ground = new Uint8Array(n);
   cover = new Float32Array(n);
 
   const NORM = 1 / 0.9375; // fbm() max, to normalize into 0..1
@@ -39,11 +50,18 @@ export const generate = (s = 0) => {
       // Low-frequency landforms → a few hills and water bodies across the map.
       const e = clamp01(fbm(wx * 0.0016, wy * 0.0016) * NORM);
       elevation[i] = e;
-      water[i] = e < WATER_LEVEL ? 1 : 0;
+      // Class: water below the line; the low band above it is always wet mud,
+      // and marsh noise pools bog patches a little higher (same fbm family at
+      // its own offset, so it's deterministic per seed like everything else).
+      ground[i] = e < WATER_LEVEL ? WATER
+        : e < WATER_LEVEL + MUD_BAND ? MUD
+        : e < WATER_LEVEL + MARSH_BAND
+            && fbm(wx * 0.004 + 100, wy * 0.004 + 100) * NORM > MARSH_GATE ? MUD
+        : LAND;
 
-      // Mid-frequency brush patches; never in water.
+      // Mid-frequency brush patches; never in water (reedy mud is fine).
       const c = fbm(wx * 0.004 + 50, wy * 0.004 + 50) * NORM;
-      cover[i] = water[i] ? 0 : smoothstep(0.5, 0.72, c);
+      cover[i] = ground[i] === WATER ? 0 : smoothstep(0.5, 0.72, c);
     }
   }
 };
@@ -51,9 +69,25 @@ export const generate = (s = 0) => {
 // --- sampling --------------------------------------------------------------
 export const cellOf = (wx, wy) => cellIndexOf(wx, wy, CELL, cols, rows);
 
-export const isWaterAt = (wx, wy) => water[cellOf(wx, wy)] === 1;
+export const isWaterAt = (wx, wy) => ground[cellOf(wx, wy)] === WATER;
+export const mudAt = (wx, wy) => ground[cellOf(wx, wy)] === MUD;
 export const elevBilinear = (wx, wy) => sampleBilinear(elevation, cols, rows, CELL, wx, wy);
 export const coverBilinear = (wx, wy) => sampleBilinear(cover, cols, rows, CELL, wx, wy);
+
+// Mudness 0..1 at a world point — bilinear over the mud mask, so the ground
+// bake feathers mud edges instead of stepping at cell size. Renderer-only;
+// the sim reads mud nearest-cell via mudAt like every other terrain effect.
+export const mudBilinear = (wx, wy) => {
+  const fx = wx / CELL, fy = wy / CELL;
+  const fx0 = Math.floor(fx), fy0 = Math.floor(fy);
+  const tx = fx - fx0, ty = fy - fy0;
+  const x0 = clampIndex(fx0, cols), y0 = clampIndex(fy0, rows);
+  const x1 = x0 + 1 < cols ? x0 + 1 : x0;
+  const y1 = y0 + 1 < rows ? y0 + 1 : y0;
+  const r0 = y0 * cols, r1 = y1 * cols;
+  const m = (c) => (ground[c] === MUD ? 1 : 0);
+  return lerp(lerp(m(r0 + x0), m(r0 + x1), tx), lerp(m(r1 + x0), m(r1 + x1), tx), ty);
+};
 
 // --- compact hash-based value noise + fbm ----------------------------------
 const hash = (x, y) => {

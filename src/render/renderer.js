@@ -373,6 +373,15 @@ export const buildTerrain = (r) => {
           r0 = lerp(r0, 99, stone), g0 = lerp(g0, 97, stone), b0 = lerp(b0, 104, stone)
         );
 
+        // Mud: dark wet umber over shoreline bands and marsh patches, blended
+        // before the hillshade so the mottling still grains it. Bilinear over
+        // the sim's mud mask (mudBilinear) keeps the edges feathered and the
+        // visuals agreeing with the slowdown cell for cell.
+        const mud = T.mudBilinear(wx, wy);
+        mud > 0.002 && (
+          r0 = lerp(r0, 48, mud), g0 = lerp(g0, 40, mud), b0 = lerp(b0, 27, mud)
+        );
+
         // Directional hillshade from the local slope, times both noise scales.
         const gx = T.elevBilinear(wx + d, wy) - e;
         const gy = T.elevBilinear(wx, wy + d) - e;

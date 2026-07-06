@@ -1,6 +1,6 @@
 # Plan: unit rework — armor × weapon axes
 
-Status: **in implementation** — phases 1–4 landed (§10). Numbers are starting
+Status: **in implementation** — phases 1–5 landed (§10). Numbers are starting
 points, not balance.
 Source notes: `todo` (repo root) + README backlog (bow classes vs. armor tiers,
 cavalry charges, archer fire discipline).
@@ -554,8 +554,28 @@ tooltip, it doesn't belong here.
    *marching* pike blocks still crush cavalry. That is Swiss doctrine (the
    attack is the defense) falling out of the movement model. The old
    charge-mechanic tuning reference lives at `585a113`.
-5. **Terrain.** `ground` grid with mud + generation + renderer bake + speed
-   effect; polearm brush cooldown.
+5. **Terrain.** ✅ *Done.* The private `water` grid generalized to a
+   `ground` class grid (0 land / 1 water / 2 mud): `isWaterAt` kept its
+   signature, `mudAt` added (nearest-cell, like every sim terrain read),
+   plus a renderer-only `mudBilinear` so the bake feathers mud edges
+   instead of stepping at cell size. Generation per §5: the always-wet
+   shoreline band (`MUD_BAND` 0.05) plus noise-gated marsh pooling up to 3×
+   that band — the gate tuned to ~7–10% mud on a typical map, rising to
+   ~18% on the wettest seeds (a marshy map should read marshy). Effects:
+   `MUD_SLOW` 0.5 as a travel multiplier (like brush — punishes cavalry
+   proportionally, no cover benefit), and the polearm brush penalty landed
+   as one factor off the striker's cover read already in hand
+   (`POLEARM_BRUSH` 0.4). Renderer: dark wet umber blended in before the
+   hillshade so the mottling still grains it — bake-time only, per-frame
+   untouched. Verified in headless Brave (one-shot `--screenshot` +
+   `--virtual-time-budget`, no new dev deps): sampled mud texels sit ~40%
+   darker and browner than the surrounding grass, and shoreline banks /
+   bog corridors read as terrain features. Balance re-run: the triangle is
+   unchanged (pikemen > knights 1696/1158, knights > longbowmen 4784/465);
+   the one moved verdict is the previously-near-coinflip longbowmen vs
+   skirmishers, now longbowmen 1791/1402 — mud-slowed approaches buy the
+   standing line extra volleys. Matrix throughput ~6.0k ticks/sec (~6%
+   paid to the mud read).
 6. **Roster & cost.** Full initial roster (light horse, sergeants), archetype
    costs, budget-based army generation, per-archetype `ARMY_MIX`. The
    balance harness's `--matrix` mode switches from equal counts to equal
