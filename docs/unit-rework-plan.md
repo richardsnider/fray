@@ -1,6 +1,6 @@
 # Plan: unit rework — armor × weapon axes
 
-Status: **in implementation** — phase 1 landed (§10). Numbers are starting
+Status: **in implementation** — phases 1–2 landed (§10). Numbers are starting
 points, not balance.
 Source notes: `todo` (repo root) + README backlog (bow classes vs. armor tiers,
 cavalry charges, archer fire discipline).
@@ -98,8 +98,11 @@ MOUNT_SPEED  = 1.8            // pace multiplier when mounted
 
 // Weapon:            BLADE  BLUNT  POLEARM  BOW  LONGBOW  LANCE
 WEAPON_RANGE    = [      5,     5,      11,   70,     110,     6 ]
-WEAPON_DPS      = [     16,    14,      16,    —,       —,    12 ]  // melee hp/sec
-// polearm dps is at full reach (§3 profile); lance dps is standing still (§3).
+WEAPON_DPS      = [     16,    14,      18,    —,       —,     8 ]  // melee hp/sec
+// polearm dps is at full reach (§3 profile) and assumes a braced foot pike —
+// mounted polearms take POLEARM_MOUNT_MULT ≈ 0.6 on it (§3). Lance dps is
+// standing still (§3), deliberately below even an unbraced mounted polearm:
+// a lance is nothing without speed.
 // Ranged weapons are volley events, not rates (see §4):
 //                     BOW  LONGBOW
 VOLLEY_DMG      = [     14,      30 ]  // per volley
@@ -108,7 +111,7 @@ VOLLEY_RELOAD   = [    0.9,     1.6 ]  // seconds
 // Weapon-vs-armor damage multiplier (replaces DMG_MULT):
 //                      vs NONE  vs ARMORED  vs HEAVY
 WEAPON_VS_ARMOR = [
-  /* BLADE   */        [  1.3,      1.0,       0.6  ],
+  /* BLADE   */        [  1.3,      0.85,      0.6  ],  // cuts notch on mail
   /* BLUNT   */        [  1.0,      1.1,       1.3  ],
   /* POLEARM */        [  1.0,      1.0,       1.0  ],  // power is in reach, not matchup
   /* BOW     */        [  1.0,      0.55,      0.15 ],  // shortbow: armor shrugs it off
@@ -118,11 +121,17 @@ WEAPON_VS_ARMOR = [
 
 MOUNT_ARROW_MULT = 1.4   // BOW/LONGBOW damage vs mounted units below HEAVY:
                          // unbarded horses die to massed arrows (README backlog)
+
+POLEARM_VS_MOUNT = 1.5   // polearm melee damage vs mounted, any tier: a set
+                         // pike stops the horse itself — barding blocks
+                         // arrows, not a braced point (melee analog of
+                         // MOUNT_ARROW_MULT)
 ```
 
-Sanity check vs. today: pike 14 dps → polearm 16 dps *at full reach*, near
-zero adjacent. Knight melee 18 dps → lance 12 dps standing (weak in a press)
-but several-fold that while still moving at contact. Longbow volley 30 stays.
+Sanity check vs. today: pike 14 dps → polearm 18 dps *at full reach*, near
+zero adjacent. Knight melee 18 dps → lance 8 dps standing (helpless in a
+press) but many-fold that while still moving at contact. Longbow volley 30
+stays.
 
 ---
 
@@ -170,6 +179,24 @@ reach of rank 2, eight units back. Pike > cavalry survives the death of
 scattered pike squad genuinely loses to blades in the press. Nothing new to
 code for this; it falls out of the profile + `FORM_SPACING`.
 
+**Polearms are anti-cavalry in themselves** (`POLEARM_VS_MOUNT`, §2): a
+braced point kills the horse, a big target barding can't save, so the bonus
+applies at any armor tier — the reason *unarmored* pike levies historically
+stopped heavy cavalry (schiltrons, Courtrai). Verified in the harness with
+temporary archetypes: heavy blunt cavalry beat unarmored pikes 1748/972
+without the bonus and loses 1080/1541 with it, while blade knights still cut
+down levy pikes (armored pikemen are the true counter). One `ARCH_MOUNTED`
+read folded into the polearm profile branch — no cost to other weapons.
+
+**Mounted polearms keep the reach, not the rate.** The full polearm rate is
+a braced two-handed foot pike; a rider thrusts one-handed, so mounted ×
+POLEARM takes `POLEARM_MOUNT_MULT ≈ 0.6` on the dps — baked into the
+flattened per-archetype dps (`ARCH_MELEE_DPS`) at config load, so the hot
+loop still makes one indexed read. That slots a future demi-lancer /
+mounted-sergeant between lance cavalry (all speed, nothing standing) and
+foot pikes (all brace): good reach, a moderate sustained rate, no charge
+spike. The lance's standing 8 sits deliberately below this unbraced rate.
+
 **Standoff distance.** An engaged unit currently presses to contact. A
 polearm unit should hold at reach instead: engaged units seek the enemy only
 while `d > STANDOFF[w]` (≈ `0.7 × range` for polearm, ~0 for blade/blunt).
@@ -197,8 +224,9 @@ speedScale = 1 + speedFrac × LANCE_SPEED_MULT
   damage "is still really bad at shorter melee distances like infantry."
 - The crash is a **self-limiting burst**: contact at gallop lasts only a
   handful of ticks before the press bleeds the knight's speed, so
-  `LANCE_SPEED_MULT` needs to be large for the impact to read — start ~5,
-  tune in the harness.
+  `LANCE_SPEED_MULT` needs to be large for the impact to read — with the
+  standing rate at 8, start ~8 (gallop ≈ 72 hp/sec for the moments it
+  lasts), tune in the harness.
 - **Nothing may slow the approach.** Verified against the current movement
   code: there is no arrival deceleration (seek acceleration is
   constant-magnitude all the way to contact) and separation is friend-only,
@@ -439,13 +467,30 @@ tooltip, it doesn't belong here.
    seed-identical: byte-exact FNV hash over all unit arrays after 3000 ticks
    matches the pre-refactor code across three seeds.
 2. **Weapon matrix + profiles — lands together with the balance
-   harness.** Melee stays `dps × dt`; swap `DMG_MULT`/`TYPE_ARMOR`/
-   `TYPE_MELEE_DPS` for `WEAPON_DPS` × `WEAPON_VS_ARMOR`, add the polearm
-   reach profile + standoff and the widened polearm scan. `test/balance.js`
-   + the `npm run balance` scripts (§9) ship in the same change and gate it:
-   pike > cavalry > archers > pike must hold in the matrix runs, not just
-   look right on screen. Targeting of routing units stays as today: valid
-   victims who never strike back (§8).
+   harness.** ✅ *Done.* Melee stayed `dps × dt`; the interim per-archetype
+   tables died for `WEAPON_DPS` × `WEAPON_VS_ARMOR`; polearm reach profile,
+   standoff, and the widened polearm scan landed, plus the §2 armor
+   speed/hp targets (knights now pace 1.26). Engaged units no longer regen
+   morale (a polearm fighting at reach 8–11 is outside the awareness radius
+   but must not recover mid-fight). `world.init` grew an optional
+   `{ mix0, mix1, size }` override for the harness, which re-points rally
+   flags at the map center so matchups collide. Gate results (500 v 500,
+   6000 ticks, 5 seeds × both sides): pikemen > knights 2888/603,
+   knights > longbowmen 2869/375, longbowmen > pikemen 3002/288 — the
+   triangle holds, with pike > cavalry emphatic. Tunes against the harness
+   got it there: BLADE vs ARMORED 1.0 → 0.85 (cuts notch on mail), polearm
+   dps 16 → 18, and `POLEARM_VS_MOUNT` 1.5 (§2–3) — at the draft numbers
+   the pike win was a near-coinflip 1794/1612, a burrowed knight trading
+   too well against 105 hp pikes, and unarmored pikes lost outright to
+   heavy cavalry. Also settled here: mounted polearms bake ×0.6 can't-brace
+   into `ARCH_MELEE_DPS`, and lance standing dps dropped 12 → 8, below the
+   unbraced mounted polearm (§2–3). The longbow-vs-pike margin is lopsided;
+   leave it until phase 3's stand-still rule nerfs longbows naturally, then
+   retune. Scan
+   widening measured (§3's caveat): ~1.3 ms vs ~0.9 ms per tick at ~5k
+   units in node, part of it more survivors to simulate — ~25× realtime
+   headroom, so the aim-grid gating fallback stays unneeded. Targeting of
+   routing units stays as today: valid victims who never strike back (§8).
 3. **Ranged split.** Parametrize `archery.js` per weapon; longbow
    stand-still reset gate (§4); shooter-side cover; `MOUNT_ARROW_MULT`. Add
    skirmishers to the roster.

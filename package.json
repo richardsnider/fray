@@ -6,6 +6,8 @@
   "description": "A lightweight, dependency-free browser war/battle simulator set in ~1450 Europe.",
   "scripts": {
     "serve": "python3 -m http.server 8080",
+    "balance": "node test/balance.js",
+    "balance:matrix": "node test/balance.js --matrix",
     "analyze": "fallow",
     "audit": "fallow audit",
     "dead-code": "fallow dead-code"

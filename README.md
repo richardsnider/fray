@@ -19,6 +19,12 @@ Any static server works.
 
 The game itself has **zero runtime dependencies**. See package.json for dev scripts.
 
+The sim is DOM-free, so it runs headless in plain node: `npm run balance`
+plays out full battles faster than realtime and prints survivors by archetype,
+and `npm run balance:matrix` pits every archetype squad against every other to
+check the matchup triangle (`test/balance.js`). Combat numbers get tuned
+against these runs, not by eyeballing the screen.
+
 ## Current state: vertical slice
 
 - Fixed-timestep (33 Hz) sim loop, decoupled from rendering with interpolation.
@@ -32,9 +38,16 @@ The game itself has **zero runtime dependencies**. See package.json for dev scri
   facing and a formation type, and every follower holds a slot in a grid of
   ranks behind it — squads settle into blocks instead of balls, best-effort
   (combat and routing override it; slots over water park on the shore).
-- Three unit types — heavy cavalry, longbow archers, pike/melee — with
-  data-driven stats and a rock-paper-scissors damage table
-  (`src/config.js`, `src/sim/world.js`).
+- Units as **archetypes on two axes** — armor tier × weapon class, plus a
+  mount flag (`src/config.js`): knights (heavy, mounted), longbowmen, and
+  pikemen so far. Damage runs on a weapon-vs-armor matrix instead of an
+  authored counter table, and polearms fight at reach — near-full damage at
+  the point of the pike, almost none adjacent, holding standoff instead of
+  pressing — so pike blocks beat cavalry through formation depth and set
+  points that kill the horses themselves, while blades that burrow into the
+  ranks win the press. The rock-paper-scissors
+  falls out instead of being scripted (`src/sim/world.js`,
+  `docs/unit-rework-plan.md`).
 - Massed archery as **area fire** (`src/sim/archery.js`): each volley targets
   the densest enemy cell in bow range (the beaten zone) and lands after a
   flight delay on whoever is standing there — friend or foe — so units can
@@ -95,6 +108,8 @@ src/
   util/
     math.js          shared pure helpers (lerp, clamp/clamp01/clampIndex, smoothstep)
     grid2d.js        uniform-grid helpers (world→cell indexing, bilinear sampling)
+test/
+  balance.js         headless balance harness (npm run balance / balance:matrix)
 ```
 
 **Code style — data-oriented & functional.** There are no classes. Each module
@@ -200,13 +215,12 @@ order:
 
 ### Backlog — unscheduled design notes
 
-- **Bow classes vs. armor tiers.** Split archery into shortbow/longbow classes
-  against armor tiers instead of one RPS row: shortbows threaten only
-  unarmored/padded troops, longbows defeat mail + padding but not late-period
-  full plate (which is near arrow-proof frontally), and horses stay vulnerable
-  regardless — massed volleys break a charge through the mounts, not the
-  riders. Today's `DMG_MULT` row + `TYPE_ARMOR` approximates this; revisit
-  when unit types grow.
+- **Bow classes vs. armor tiers.** Partly landed via the unit rework: the
+  weapon-vs-armor matrix (`WEAPON_VS_ARMOR`) now carries longbows-defeat-mail-
+  not-plate, with a shortbow row waiting. The shortbow class itself (fires on
+  the move, horse archers) and horse vulnerability to massed arrows
+  (`MOUNT_ARROW_MULT`) land with the ranged split —
+  `docs/unit-rework-plan.md` §4.
 - **Archer fire discipline.** Volley aiming is deliberately dumb (densest
   enemy cell, friendly fire included). Hold-fire judgement — not volleying a
   melee your own pikes are winning — belongs to the AI director, not the

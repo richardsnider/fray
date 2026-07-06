@@ -34,29 +34,65 @@ export const WATER_LOOK = 22;           // look-ahead distance for shoreline avo
 export const WATER_AVOID = 160;         // steering force away from water ahead
 
 // Combat.
-export const ATTACK_RANGE = 5;          // melee reach (world units). Per-archetype dps is ARCH_MELEE_DPS.
 export const FLEE_SPEED_MULT = 1.6;     // routing units run faster than they march
+
+// Polearm profile (docs/unit-rework-plan.md §3): damage scales with distance to
+// the target — full rate near max reach, almost nothing adjacent — and the
+// wielder holds at standoff instead of pressing to contact, so formation depth
+// is mechanically real: rank 2 fights over rank 1's shoulder, while blades
+// that burrow past the points face near-harmless pikes.
+export const POLEARM_MIN = 0.05;        // damage fraction when adjacent
+export const POLEARM_FULL_FRAC = 0.75;  // fraction of reach where the profile hits full rate
+export const STANDOFF_FRAC = 0.7;       // fraction of reach a polearm holds at while engaged
+export const POLEARM_VS_MOUNT = 1.5;    // polearm damage multiplier vs mounted: a set pike
+                                        // stops the horse — a big target barding can't save
+                                        // from a braced point (melee analog of MOUNT_ARROW_MULT)
 
 // --- Archetypes: armor × weapon axes ------------------------------------------
 // A unit is an armor tier × a weapon class × a mount flag (see
 // docs/unit-rework-plan.md). Units carry a single archetype id (units.js
 // `arch`); config flattens the axes into per-archetype ARCH_* lookup arrays at
 // load, so hot-loop stat reads stay one indexed load and never recombine axes.
-export const Armor = { NONE: 0, ARMORED: 1, HEAVY: 2 };
+const Armor = { NONE: 0, ARMORED: 1, HEAVY: 2 };
 export const Weapon = { BLADE: 0, BLUNT: 1, POLEARM: 2, BOW: 3, LONGBOW: 4, LANCE: 5 };
 
-// Armor trades speed for protection; a mount buys the pace back. Phase-1
-// parity: armor doesn't slow anyone yet — the rework's target speed tiers land
-// with the weapon matrix + balance harness — so every derived stat below
-// matches the old TYPE_* tables exactly and a seed replays identically.
-//                            NONE ARMORED HEAVY
-export const ARMOR_HP     = [  65,    100,  150 ];  // starting hit points
-export const ARMOR_SPEED  = [ 1.0,    1.0,  1.0 ];  // march-pace multiplier
-export const MOUNT_SPEED  = 1.8;                    // pace multiplier when mounted
+// Armor trades speed for protection; a mount buys the pace back. Protection
+// lives entirely in WEAPON_VS_ARMOR below — armor applies no generic damage
+// reduction (one mechanism, no double counting). Heavy + mounted → 1.8 × 0.70
+// = 1.26: an expensive unit only a little faster than unarmored infantry.
+// (Consumed below when flattening ARCHETYPES — the sim reads only ARCH_*.)
+//                     NONE ARMORED HEAVY
+const ARMOR_HP     = [  70,    105,  150 ];  // starting hit points
+const ARMOR_SPEED  = [ 1.0,   0.85, 0.70 ];  // march-pace multiplier
+const MOUNT_SPEED  = 1.8;                    // pace multiplier when mounted
+
+// Weapons own damage, reach, and how each interacts with armor. Melee is a
+// continuous rate (hp/sec against the closest enemy — plan §3); bows are
+// volley events (sim/archery.js) with dps 0 here, and their WEAPON_RANGE entry
+// is volley range. Lance reads as generic melee until phase 4's speed scale.
+// Weapon:                  BLADE BLUNT POLEARM BOW LONGBOW LANCE
+export const WEAPON_RANGE = [   5,    5,     11,  70,   110,    6 ]; // reach (world units)
+export const WEAPON_DPS   = [  16,   14,     18,   0,     0,    8 ]; // melee hp/sec; 0 = doesn't melee
+// Polearm 18 is a braced foot pike at full reach — the deadliest melee in the
+// game (and near zero adjacent, see the reach profile). Lance 8 is the rate
+// *standing*: deliberately below even an unbraced mounted polearm, because a
+// lance is nothing without speed — phase 4's speed scale is its whole value.
+
+// Weapon-vs-armor damage multiplier — the whole protection story, applied to
+// melee and to arrow impacts. Replaces the old RPS type matrix: matchups fall
+// out of how weapons meet armor, reach, and ground, not an authored counter chart.
+//                             vs NONE  vs ARMORED  vs HEAVY
+export const WEAPON_VS_ARMOR = [
+  /* BLADE   */             [    1.3,      0.85,      0.6  ], // cuts notch on mail
+  /* BLUNT   */             [    1.0,      1.1,       1.3  ],
+  /* POLEARM */             [    1.0,      1.0,       1.0  ], // power is in reach, not matchup
+  /* BOW     */             [    1.0,      0.55,      0.15 ], // shortbow: armor shrugs it off
+  /* LONGBOW */             [    1.3,      1.0,       0.5  ], // defeats mail, not plate
+  /* LANCE   */             [    1.2,      1.0,       0.9  ], // × speed scale (phase 4)
+];
 
 // The roster: adding an archetype is one line. Knights carry a generic BLADE
-// until the lance mechanic lands (plan phase 4); weapons only pick sprites for
-// now, damage still runs on the interim per-archetype tables below.
+// until the lance mechanic lands (plan phase 4).
 export const ARCHETYPES = [
   { name: 'knights',    armor: Armor.HEAVY,   weapon: Weapon.BLADE,   mounted: 1 },
   { name: 'longbowmen', armor: Armor.NONE,    weapon: Weapon.LONGBOW, mounted: 0 },
@@ -65,34 +101,25 @@ export const ARCHETYPES = [
 export const ARCH_COUNT = ARCHETYPES.length;
 export const Arch = Object.fromEntries(ARCHETYPES.map((a, i) => [a.name.toUpperCase(), i]));
 
+// A rider's spear keeps the reach but can't brace: mounted polearms thrust
+// one-handed at a fraction of the foot pike's rate. Baked into the flattened
+// per-archetype dps below so the hot loop still makes one indexed read.
+const POLEARM_MOUNT_MULT = 0.6;
+
 // Flattened per-archetype lookups (plain arrays keep the stats full-precision).
 export const ARCH_ARMOR   = ARCHETYPES.map((a) => a.armor);
 export const ARCH_WEAPON  = ARCHETYPES.map((a) => a.weapon);
 export const ARCH_MOUNTED = ARCHETYPES.map((a) => a.mounted);
 export const ARCH_HP      = ARCHETYPES.map((a) => ARMOR_HP[a.armor]);
 export const ARCH_SPEED   = ARCHETYPES.map((a) => ARMOR_SPEED[a.armor] * (a.mounted ? MOUNT_SPEED : 1));
-
-// Interim combat tables, keyed per archetype. They die in phase 2, replaced by
-// WEAPON_DPS × WEAPON_VS_ARMOR — protection moves into the matrix and stops
-// being a generic damage reduction.
-//                               knights longbowmen pikemen
-export const ARCH_MELEE_DPS  = [    18,       4,      14  ];  // hp/sec in melee reach
-export const ARCH_DMG_REDUCE = [  0.45,    0.10,    0.30  ];  // fractional incoming-dmg reduction
-
-// Rock-paper-scissors: multiplier applied to damage from attacker → target
-// (melee and ranged), roughly pike > cavalry > archers > pike. Dies in phase 2.
-//                            target: knights longbowmen pikemen
-export const DMG_MULT = [
-  /* knights    attack */         [    1.0,     1.6,    0.55 ],
-  /* longbowmen attack */         [    0.6,     1.0,    1.35 ],
-  /* pikemen    attack */         [    1.7,    0.85,    1.0  ],
-];
+export const ARCH_MELEE_DPS = ARCHETYPES.map((a) =>
+  WEAPON_DPS[a.weapon] * (a.mounted && a.weapon === Weapon.POLEARM ? POLEARM_MOUNT_MULT : 1));
 
 // Longbows: massed area fire (see sim/archery.js). A ready archer volleys at
 // the densest enemy cell of the aim grid within range — the beaten zone — and
 // the arrows land ARROW_FLIGHT seconds later on whoever is standing there,
-// friend or foe, damage split across the cell's occupants and reduced by armor,
-// the RPS multiplier, and brush cover (the cover-vs-archers mechanic).
+// friend or foe, damage split across the cell's occupants and reduced by the
+// weapon-vs-armor matrix and brush cover (the cover-vs-archers mechanic).
 export const ARCHER_RANGE = 110;        // bow reach (world units)
 export const ARCHER_RELOAD = 1.4;       // seconds between volleys (keep > ARROW_FLIGHT)
 export const ARCHER_SHOT_DMG = 30;      // base damage per volley

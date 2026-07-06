@@ -9,19 +9,32 @@ import * as Rally from './rally.js';
 import * as Formation from './formation.js';
 import * as Command from './command.js';
 import { mulberry32 } from './rng.js';
-import { clamp, clampIndex, mag } from '../util/math.js';
+import { clamp, clamp01, clampIndex, lerp, mag } from '../util/math.js';
 import { cellCoord } from '../util/grid2d.js';
 import {
   MAX_UNITS, WORLD_W, WORLD_H, ARMY_SIZE, SEEK_ACCEL, SEP_RADIUS, SEP_ACCEL, DAMPING,
-  MAX_STEER_SPEED, ATTACK_RANGE, FLEE_SPEED_MULT,
+  MAX_STEER_SPEED, FLEE_SPEED_MULT,
   MORALE_MAX, ROUT_THRESHOLD, RALLY_THRESHOLD, MORALE_REGEN,
   FEAR_OUTNUMBERED, FEAR_PANIC, HIT_FEAR,
   SLOPE_SPEED, COVER_SLOW, HEIGHT_DMG, WATER_LOOK, WATER_AVOID,
   ARCH_COUNT, ARMY_MIX, SQUAD_SIZE, SQUAD_RADIUS, REFORM_TICKS,
-  ARCH_SPEED, ARCH_MELEE_DPS, ARCH_DMG_REDUCE, DMG_MULT,
+  ARCH_SPEED, ARCH_ARMOR, ARCH_WEAPON, ARCH_MOUNTED, ARCH_MELEE_DPS, Weapon,
+  WEAPON_RANGE, WEAPON_DPS, WEAPON_VS_ARMOR,
+  POLEARM_MIN, POLEARM_FULL_FRAC, STANDOFF_FRAC, POLEARM_VS_MOUNT,
 } from '../config.js';
 
 const { ACTIVE, ROUTING, DEAD } = U.STATE;
+const POLEARM = Weapon.POLEARM;
+
+// Per-weapon derived tables, computed once at load. Bows never melee (dps 0),
+// so their long volley range widens nothing here. The scan ring is how many
+// spatial-grid cells the closest-enemy search must walk to see the weapon's
+// reach — 1 (the 3×3 separation walk) for everything but polearm's reach 11.
+const MELEE_R2 = WEAPON_RANGE.map((r, w) => (WEAPON_DPS[w] > 0 ? r * r : 0));
+const STANDOFF2 = WEAPON_RANGE.map((r, w) => (w === POLEARM ? (r * STANDOFF_FRAC) ** 2 : 0));
+const POLEARM_FULL = WEAPON_RANGE[POLEARM] * POLEARM_FULL_FRAC; // distance of full-rate reach damage
+const ENEMY_R2 = MELEE_R2.map((r2) => Math.max(r2, SEP_RADIUS * SEP_RADIUS));
+const SCAN_RING = ENEMY_R2.map((r2) => Math.ceil(Math.sqrt(r2) / SEP_RADIUS));
 
 const W = WORLD_W;
 const H = WORLD_H;
@@ -45,7 +58,9 @@ const stats = { team0: 0, team1: 0 };
 // reproduces the whole battle. Decorrelated from the terrain seed via XOR.
 let rng = Math.random;
 
-export const init = (seed = 0) => {
+// `armies` (optional, used by the balance harness) overrides the deployment:
+// { mix0, mix1, size } — per-archetype mix of either side and units per side.
+export const init = (seed = 0, armies = null) => {
   rng = mulberry32((seed ^ 0x9e3779b9) >>> 0);
   T.generate(seed);
   grid = Grid.create(W, H, SEP_RADIUS);
@@ -55,7 +70,7 @@ export const init = (seed = 0) => {
   Rally.reset();
   Command.reset();
   U.reset();
-  spawnArmies();
+  spawnArmies(armies);
   Formation.reassignAll(); // deal every squad its opening rank-and-file slots
 };
 
@@ -70,22 +85,23 @@ export const getTick = () => tick;
 // the consumer last reset `n`. Write-only for the sim — determinism unaffected.
 export const deaths = { x: new Float32Array(MAX_UNITS), y: new Float32Array(MAX_UNITS), n: 0 };
 
-const spawnArmies = () => {
-  spawnArmy(W * 0.06, W * 0.24, 0);
-  spawnArmy(W * 0.76, W * 0.94, 1);
+const spawnArmies = (armies) => {
+  const size = armies?.size ?? ARMY_SIZE;
+  spawnArmy(W * 0.06, W * 0.24, 0, armies?.mix0 ?? ARMY_MIX, size);
+  spawnArmy(W * 0.76, W * 0.94, 1, armies?.mix1 ?? ARMY_MIX, size);
 };
 
 // Deploy an army into its zone [x0,x1] x [y0,y1] as clustered single-archetype
 // squads, so each archetype reads as a coherent group instead of an intermixed
-// soup. Per-archetype counts follow ARMY_MIX; the last archetype absorbs any
-// rounding remainder so the total stays exactly ARMY_SIZE.
-const spawnArmy = (x0, x1, team) => {
+// soup. Per-archetype counts follow `mix`; the last archetype absorbs any
+// rounding remainder so the total stays exactly `size`.
+const spawnArmy = (x0, x1, team, mix, size) => {
   const y0 = H * 0.2, y1 = H * 0.8;
   let placed = 0;
   for (let t = 0; t < ARCH_COUNT; t++) {
     const count = t === ARCH_COUNT - 1
-      ? ARMY_SIZE - placed
-      : Math.round(ARMY_SIZE * ARMY_MIX[t]);
+      ? size - placed
+      : Math.round(size * mix[t]);
     for (let n = count; n > 0; n -= SQUAD_SIZE) {
       spawnSquad(x0, x1, y0, y1, team, t, Math.min(SQUAD_SIZE, n));
     }
@@ -150,7 +166,6 @@ export const step = (dt) => {
 
   const { cell, cols, rows, heads, next } = grid;
   const scanR2 = SEP_RADIUS * SEP_RADIUS;   // separation / awareness radius
-  const attackR2 = ATTACK_RANGE * ATTACK_RANGE;
 
   for (let i = 0; i < count; i++) {
     const xi = U.x[i];
@@ -158,6 +173,7 @@ export const step = (dt) => {
     const teami = U.team[i];
     const statei = U.state[i];
     const archi = U.arch[i];
+    const weapi = ARCH_WEAPON[archi];
     // This unit's terrain cell, shared by the combat height bonus and the
     // movement cover/slope factors below.
     const tcx = cellCoord(xi, T.CELL, T.cols);
@@ -166,19 +182,24 @@ export const step = (dt) => {
     U.cooldown[i] > 0 && (U.cooldown[i] -= dt); // archer reload
 
     // --- neighbor scan: separation (friends), plus enemy/friend awareness -----
+    // Separation and the morale counts keep today's SEP_RADIUS; only the
+    // closest-enemy search accepts out to the weapon's melee reach, which
+    // widens the cell walk past 3×3 solely for polearms (reach 11 > cell 6).
     let sx = 0, sy = 0;
     let friendClose = 0;
     let enemyClose = 0;
     let routNear = 0;
-    let ceIdx = -1;         // closest enemy
+    let ceIdx = -1;         // closest enemy (within ENEMY_R2 of this weapon)
     let ceD2 = Infinity;
 
+    const ring = SCAN_RING[weapi];
+    const enemyR2 = ENEMY_R2[weapi];
     const cx = cellCoord(xi, cell, cols);
     const cy = cellCoord(yi, cell, rows);
-    for (let oy = -1; oy <= 1; oy++) {
+    for (let oy = -ring; oy <= ring; oy++) {
       const gy = cy + oy;
       if (gy < 0 || gy >= rows) continue;
-      for (let ox = -1; ox <= 1; ox++) {
+      for (let ox = -ring; ox <= ring; ox++) {
         const gx = cx + ox;
         if (gx < 0 || gx >= cols) continue;
         let j = heads[gy * cols + gx];
@@ -187,17 +208,19 @@ export const step = (dt) => {
             const dx = xi - U.x[j];
             const dy = yi - U.y[j];
             const dd = dx * dx + dy * dy;
-            if (dd < scanR2 && dd > 0.0001) {
+            if (dd < enemyR2 && dd > 0.0001) {
               // friend vs enemy: local const inv keeps this an if/else.
               if (U.team[j] === teami) {
-                // Separation applies to friends only, so enemy ranks can close.
-                const inv = 1 / Math.sqrt(dd);
-                sx += (dx * inv) * (SEP_RADIUS * inv);
-                sy += (dy * inv) * (SEP_RADIUS * inv);
-                friendClose++;
-                U.state[j] === ROUTING && routNear++;
+                if (dd < scanR2) {
+                  // Separation applies to friends only, so enemy ranks can close.
+                  const inv = 1 / Math.sqrt(dd);
+                  sx += (dx * inv) * (SEP_RADIUS * inv);
+                  sy += (dy * inv) * (SEP_RADIUS * inv);
+                  friendClose++;
+                  U.state[j] === ROUTING && routNear++;
+                }
               } else {
-                enemyClose++;
+                dd < scanR2 && enemyClose++;
                 dd < ceD2 && (ceD2 = dd, ceIdx = j);
               }
             }
@@ -207,32 +230,50 @@ export const step = (dt) => {
       }
     }
 
-    // --- combat: active units strike the nearest enemy in reach ---------------
+    // --- combat: active units strike the nearest enemy in weapon reach --------
+    // Continuous dps × dt into the accumulator, single-target — which is what
+    // makes flanking emergent: three attackers pour in 3× and eat 1× back.
+    // Damage = weapon rate × the weapon-vs-armor matrix × the height bonus ×
+    // the polearm reach profile: a pike at near-max reach fights at full rate
+    // but adjacent it is nearly harmless, so the block's reach — rank 2
+    // fighting over rank 1's shoulder — beats cavalry, and a blade that
+    // burrows into the ranks faces blunted points. Bows have melee dps 0 and
+    // never engage (MELEE_R2 = 0); their fight is sim/archery.js.
     let engaged = false;
-    if (statei === ACTIVE && ceIdx !== -1 && ceD2 <= attackR2) {
-      const tt = U.arch[ceIdx];
+    if (statei === ACTIVE && ceIdx !== -1 && ceD2 <= MELEE_R2[weapi]) {
       // Attacking downhill (higher ground than the target) hits harder.
       const dh = T.elevation[tcell] - T.elevation[T.cellOf(U.x[ceIdx], U.y[ceIdx])];
       const bonus = clamp(1 + dh * HEIGHT_DMG, 0.5, 1.6);
-      // Per-archetype dps, the rock-paper-scissors matchup, and the target's
-      // damage reduction (interim tables — the weapon-vs-armor matrix replaces
-      // them in rework phase 2).
-      dmg[ceIdx] += ARCH_MELEE_DPS[archi] * dt * bonus * DMG_MULT[archi][tt] * (1 - ARCH_DMG_REDUCE[tt]);
+      const ta = U.arch[ceIdx];
+      // Polearm: the reach profile, times the anti-cavalry bonus — a set pike
+      // stops the horse itself, which is why levy pikes stop knights.
+      const prof = weapi === POLEARM
+        ? lerp(POLEARM_MIN, 1, clamp01(Math.sqrt(ceD2) / POLEARM_FULL))
+          * (ARCH_MOUNTED[ta] ? POLEARM_VS_MOUNT : 1)
+        : 1;
+      // ARCH_MELEE_DPS is the weapon rate with the mount interaction baked in
+      // (a rider's polearm keeps reach but can't brace — config.js).
+      dmg[ceIdx] += ARCH_MELEE_DPS[archi] * dt * bonus * prof
+        * WEAPON_VS_ARMOR[weapi][ARCH_ARMOR[ta]];
       engaged = true;
     }
 
     // --- morale (everything except damage-fear, which needs the final dmg) ----
+    // The counts keep SEP_RADIUS semantics; `engaged` additionally blocks the
+    // regen so a polearm fighting at reach (enemy beyond the awareness radius
+    // but inside its 11-unit reach) doesn't recover morale mid-fight.
     let m = U.morale[i];
     const net = enemyClose - friendClose;
     enemyClose > 0
       ? (net > 0 && (m -= FEAR_OUTNUMBERED * dt * Math.min(net, 6)))
-      : (m += MORALE_REGEN * dt);
+      : engaged || (m += MORALE_REGEN * dt);
     routNear > 0 && (m -= FEAR_PANIC * dt * Math.min(routNear, 6));
     U.morale[i] = m; // clamped in the apply pass
 
     // --- movement: resolve one move desire, then a single shared steer block ---
     // Every state moves relative to one point: a routing unit flees the nearest
-    // enemy, an engaged unit presses it, everyone else marches to their rally.
+    // enemy, an engaged unit presses it (down to its weapon's standoff),
+    // everyone else marches to their rally.
     // `sign` picks seek (+1, toward) or flee (-1, away); a routing unit that
     // senses no enemy has no target and just coasts — damping bleeds off its
     // speed while separation still applies. The rally is resolved through the
@@ -247,7 +288,11 @@ export const step = (dt) => {
       seek = ceIdx !== -1;
       seek && (tx = U.x[ceIdx], ty = U.y[ceIdx], sign = -1);
     } else if (engaged) {
-      tx = U.x[ceIdx]; ty = U.y[ceIdx];
+      // Press the enemy only while beyond the weapon's standoff: blades and
+      // lances run to contact (standoff 0), polearms hold at reach — so
+      // blades naturally burrow into pike ranks where the points are blunt.
+      seek = ceD2 > STANDOFF2[weapi];
+      seek && (tx = U.x[ceIdx], ty = U.y[ceIdx]);
     } else {
       // Every live unit's rallyId resolves (squads mint a flag at spawn and
       // pruning only drops followerless flags); the guard just makes a stray
