@@ -16,7 +16,7 @@ export const MAX_ZOOM = 4;              // CSS px per world unit at full zoom-in
 export const ARMY_SIZE = 2500;
 
 // Steering / movement. SEEK_ACCEL + DAMPING set the base march velocity a unit
-// eases to; per-type pace is then a direct multiplier on travel (TYPE_SPEED_MULT).
+// eases to; per-archetype pace is then a direct multiplier on travel (ARCH_SPEED).
 export const SEEK_ACCEL = 90;
 export const SEP_RADIUS = 6;            // also the spatial-grid cell size
 export const SEP_ACCEL = 220;
@@ -34,28 +34,58 @@ export const WATER_LOOK = 22;           // look-ahead distance for shoreline avo
 export const WATER_AVOID = 160;         // steering force away from water ahead
 
 // Combat.
-export const ATTACK_RANGE = 5;          // melee reach (world units). Per-type dps is TYPE_MELEE_DPS.
+export const ATTACK_RANGE = 5;          // melee reach (world units). Per-archetype dps is ARCH_MELEE_DPS.
 export const FLEE_SPEED_MULT = 1.6;     // routing units run faster than they march
 
-// --- Unit types -------------------------------------------------------------
-// Three pre-gunpowder roles. Stats are small const arrays indexed by UnitType so
-// the hot loop reads stay cheap and balancing is a one-table edit.
-export const UnitType = { KNIGHT: 0, ARCHER: 1, PIKE: 2 };
-export const UNIT_TYPE_COUNT = 3;
+// --- Archetypes: armor × weapon axes ------------------------------------------
+// A unit is an armor tier × a weapon class × a mount flag (see
+// docs/unit-rework-plan.md). Units carry a single archetype id (units.js
+// `arch`); config flattens the axes into per-archetype ARCH_* lookup arrays at
+// load, so hot-loop stat reads stay one indexed load and never recombine axes.
+export const Armor = { NONE: 0, ARMORED: 1, HEAVY: 2 };
+export const Weapon = { BLADE: 0, BLUNT: 1, POLEARM: 2, BOW: 3, LONGBOW: 4, LANCE: 5 };
 
-//                          KNIGHT ARCHER  PIKE
-export const TYPE_HP        = [150,   65,   100];  // starting hit points
-export const TYPE_SPEED_MULT = [1.8,  1.0,   1.0]; // march-pace multiplier: cavalry outrun infantry
-export const TYPE_MELEE_DPS = [ 18,    4,    14];  // hp/sec in melee reach
-export const TYPE_ARMOR     = [0.45, 0.10,  0.30]; // fractional incoming-dmg reduction
+// Armor trades speed for protection; a mount buys the pace back. Phase-1
+// parity: armor doesn't slow anyone yet — the rework's target speed tiers land
+// with the weapon matrix + balance harness — so every derived stat below
+// matches the old TYPE_* tables exactly and a seed replays identically.
+//                            NONE ARMORED HEAVY
+export const ARMOR_HP     = [  65,    100,  150 ];  // starting hit points
+export const ARMOR_SPEED  = [ 1.0,    1.0,  1.0 ];  // march-pace multiplier
+export const MOUNT_SPEED  = 1.8;                    // pace multiplier when mounted
+
+// The roster: adding an archetype is one line. Knights carry a generic BLADE
+// until the lance mechanic lands (plan phase 4); weapons only pick sprites for
+// now, damage still runs on the interim per-archetype tables below.
+export const ARCHETYPES = [
+  { name: 'knights',    armor: Armor.HEAVY,   weapon: Weapon.BLADE,   mounted: 1 },
+  { name: 'longbowmen', armor: Armor.NONE,    weapon: Weapon.LONGBOW, mounted: 0 },
+  { name: 'pikemen',    armor: Armor.ARMORED, weapon: Weapon.POLEARM, mounted: 0 },
+];
+export const ARCH_COUNT = ARCHETYPES.length;
+export const Arch = Object.fromEntries(ARCHETYPES.map((a, i) => [a.name.toUpperCase(), i]));
+
+// Flattened per-archetype lookups (plain arrays keep the stats full-precision).
+export const ARCH_ARMOR   = ARCHETYPES.map((a) => a.armor);
+export const ARCH_WEAPON  = ARCHETYPES.map((a) => a.weapon);
+export const ARCH_MOUNTED = ARCHETYPES.map((a) => a.mounted);
+export const ARCH_HP      = ARCHETYPES.map((a) => ARMOR_HP[a.armor]);
+export const ARCH_SPEED   = ARCHETYPES.map((a) => ARMOR_SPEED[a.armor] * (a.mounted ? MOUNT_SPEED : 1));
+
+// Interim combat tables, keyed per archetype. They die in phase 2, replaced by
+// WEAPON_DPS × WEAPON_VS_ARMOR — protection moves into the matrix and stops
+// being a generic damage reduction.
+//                               knights longbowmen pikemen
+export const ARCH_MELEE_DPS  = [    18,       4,      14  ];  // hp/sec in melee reach
+export const ARCH_DMG_REDUCE = [  0.45,    0.10,    0.30  ];  // fractional incoming-dmg reduction
 
 // Rock-paper-scissors: multiplier applied to damage from attacker → target
-// (melee and ranged). Roughly pike > cavalry > archers > pike.
-//                              target: KNIGHT ARCHER  PIKE
+// (melee and ranged), roughly pike > cavalry > archers > pike. Dies in phase 2.
+//                            target: knights longbowmen pikemen
 export const DMG_MULT = [
-  /* KNIGHT attacks */         [   1.0,   1.6,  0.55 ],
-  /* ARCHER attacks */         [   0.6,   1.0,  1.35 ],
-  /* PIKE   attacks */         [   1.7,  0.85,  1.0  ],
+  /* knights    attack */         [    1.0,     1.6,    0.55 ],
+  /* longbowmen attack */         [    0.6,     1.0,    1.35 ],
+  /* pikemen    attack */         [    1.7,    0.85,    1.0  ],
 ];
 
 // Longbows: massed area fire (see sim/archery.js). A ready archer volleys at
@@ -71,11 +101,11 @@ export const AIM_CELL = 32;             // beaten-zone cell size (world units)
 export const ARROW_FLIGHT = 0.8;        // arrow flight time (seconds) before impact
 export const ARCHER_RESCAN = 0.25;      // retry delay when no enemy is in bow range
 
-// Army composition — fraction of each spawned army by type (must sum to ~1).
-//                          KNIGHT ARCHER PIKE
-export const ARMY_MIX = [0.20, 0.30, 0.50];
+// Army composition — fraction of each spawned army by archetype (must sum to ~1).
+//                     knights longbowmen pikemen
+export const ARMY_MIX = [0.20,      0.30,   0.50];
 
-// Deployment: each army spawns as clustered squads of a single type (a block of
+// Deployment: each army spawns as clustered squads of a single archetype (a block of
 // pike, a body of archers, a squadron of horse) rather than one intermixed soup,
 // so formations read as coherent groups. A squad is ~SQUAD_SIZE units scattered
 // in a SQUAD_RADIUS disk around a random deploy point in the army's zone.

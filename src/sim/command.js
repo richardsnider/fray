@@ -9,10 +9,10 @@
 import * as U from './units.js';
 import * as Rally from './rally.js';
 import * as Formation from './formation.js';
-import { UnitType } from '../config.js';
+import { Arch } from '../config.js';
 
 const DEAD = U.STATE.DEAD;
-const { KNIGHT, PIKE } = UnitType;
+const { KNIGHTS, PIKEMEN } = Arch;
 
 // Provenance of the current player selection: the rally id it was grabbed from
 // (selectByRally), or -1 when it's a fresh box-select with no flag behind it.
@@ -82,16 +82,16 @@ export const commandSelected = (x, y) => {
   Formation.reassign(Rally.byId(targetId));
 };
 
-// Count selected live units by type for the HUD. Recomputed on demand so it
-// stays honest as selected units die. Returned object is reused.
+// Count selected live units by archetype for the HUD. Recomputed on demand so
+// it stays honest as selected units die. Returned object is reused.
 const selCounts = { knight: 0, archer: 0, pike: 0, total: 0 };
 export const getSelectionCounts = () => {
   selCounts.knight = selCounts.archer = selCounts.pike = selCounts.total = 0;
   for (let i = 0; i < U.count; i++) {
     if (!liveSelected(i)) continue;
     selCounts.total++;
-    const t = U.type[i];
-    t === KNIGHT ? selCounts.knight++ : t === PIKE ? selCounts.pike++ : selCounts.archer++;
+    const t = U.arch[i];
+    t === KNIGHTS ? selCounts.knight++ : t === PIKEMEN ? selCounts.pike++ : selCounts.archer++;
   }
   return selCounts;
 };

@@ -1,6 +1,7 @@
 # Plan: unit rework — armor × weapon axes
 
-Status: **draft for discussion** — numbers are starting points, not balance.
+Status: **in implementation** — phase 1 landed (§10). Numbers are starting
+points, not balance.
 Source notes: `todo` (repo root) + README backlog (bow classes vs. armor tiers,
 cavalry charges, archer fire discipline).
 
@@ -73,11 +74,12 @@ Migration mapping: KNIGHT → knights, ARCHER → longbowmen, PIKE → pikemen.
 - **new** `steady` (Float32 or reuse pattern) — seconds stationary, for the
   longbow stand-still rule (see §4). May be derivable from per-tick travel
   instead of stored; decide at implementation.
-- **new** `discipline` (Float32, spawn default 1) — per-unit morale scale
-  for future squad variants (berserkers etc., see §8). Reserved in phase 1,
-  unwired until variants exist.
+- **future** `routAt` (Uint8, per-unit rout threshold) — for squad variants
+  (berserkers etc., see §8). Not added in phase 1: today's global
+  `ROUT_THRESHOLD` is the degenerate case (every unit the same), so the
+  array lands only when variants do (phase 7).
 
-`spawn` and `copyUnit` pick up the new fields. ~8 bytes/unit added — noise.
+`spawn` and `copyUnit` pick up the new fields. ~4 bytes/unit added — noise.
 
 ---
 
@@ -368,17 +370,25 @@ Five principles, settled:
   `WEAPON_VS_ARMOR`, and since fear follows damage taken, armor already
   shields morale *indirectly* — an explicit armor-fear scale would
   double-count, exactly what §1 forbids for damage. If heavier archetypes
-  should hold longer than their hp advantage explains, that's a `discipline`
-  default (below), not an armor mechanic.
-- **Discipline is a unit property, not an archetype property** — designed
-  for now, wired later. Morale behavior must not be hard-coded to archetype
-  tables: the future wants squad variants like a "berserker" blade-infantry
-  squad that is much harder to rout than regular blades of the *same*
-  archetype. Hook: a per-unit `discipline` scalar (see §1) that scales
-  `ROUT_THRESHOLD` / `RALLY_THRESHOLD` and/or the fear rates; archetypes
-  provide a default and the spawner can override per squad. The field lands
-  in phase 1 (it's four bytes); wiring it into morale waits until variants
-  exist.
+  should hold longer than their hp advantage explains, that's a lower
+  `routAt` default (below), not an armor mechanic.
+- **Bravery is a per-unit rout threshold — no discipline scalar, no second
+  meter.** Morale behavior must not be hard-coded to archetype tables: the
+  future wants squad variants like a "berserker" blade-infantry squad that
+  is much harder to rout than regular blades of the *same* archetype. An
+  earlier draft reserved a `discipline` scalar that would multiply the
+  thresholds; that abstraction is dropped — the knob *is* the threshold,
+  stored directly. A per-unit `routAt` (see §1), precomputed at spawn: a
+  unit routs when morale ≤ `routAt[i]` and rallies past
+  `routAt[i] + RALLY_GAP` (today's 30-point hysteresis, kept). Archetypes
+  provide the default, the spawner overrides per squad (berserkers ≈ 5,
+  regulars 25). Cost is one indexed read replacing a constant in the
+  damage-resolve pass — no per-tick multiply. The fear *rates*
+  (outnumbered, contagion, hit-fear) stay global: scaling them per unit
+  would touch three drain lines every tick for the same behavior. The
+  morale accumulator itself is untouched — it is already the minimal
+  robust mechanism (all its inputs are free byproducts of the neighbor
+  scan, and the hysteresis needs the stored meter anyway).
 
 Deliberately *not* imported from Total War: facing/attack arcs, matched
 combat, unit experience ladders, ability buttons. If a mechanic needs a
@@ -420,11 +430,14 @@ tooltip, it doesn't belong here.
 
 ## 10. Phasing — each step ships green
 
-1. **Axes under the hood, no behavior change.** Add Armor/Weapon/archetype
-   tables to config; rename `type` → `arch`; map the three current types;
-   derive speed/hp from the new tables tuned to match today's values exactly.
-   Renderer re-keys bins. Pure refactor, verifiable by seed-identical replay… 
-   (near-identical: hp/speed rounding may drift a battle — check visually).
+1. **Axes under the hood, no behavior change.** ✅ *Done.* Armor/Weapon/
+   archetype tables in config (flattened to `ARCH_*` plain arrays — full-f64
+   stats, so no rounding drift at all); `type` → `arch` through units/world/
+   archery/command; renderer bins re-keyed with mounted → horse + facings and
+   bow-class → bow arc driven by the axes. Interim tables (`ARCH_MELEE_DPS`,
+   `ARCH_DMG_REDUCE`, `DMG_MULT`) carry combat until phase 2. Verified
+   seed-identical: byte-exact FNV hash over all unit arrays after 3000 ticks
+   matches the pre-refactor code across three seeds.
 2. **Weapon matrix + profiles — lands together with the balance
    harness.** Melee stays `dps × dt`; swap `DMG_MULT`/`TYPE_ARMOR`/
    `TYPE_MELEE_DPS` for `WEAPON_DPS` × `WEAPON_VS_ARMOR`, add the polearm
@@ -445,10 +458,11 @@ tooltip, it doesn't belong here.
    costs, budget-based army generation, per-archetype `ARMY_MIX`. The
    balance harness's `--matrix` mode switches from equal counts to equal
    cost here.
-7. *(future, unscheduled)* **Squad variants** — wire the `discipline` scalar
-   (§8) into morale and let the spawner mint variant squads (berserkers
-   etc.). The field itself lands in phase 1; this phase is just the wiring,
-   whenever variants are wanted.
+7. *(future, unscheduled)* **Squad variants** — add the per-unit `routAt`
+   array (§8), swap the global `ROUT_THRESHOLD`/`RALLY_THRESHOLD` reads for
+   `routAt[i]` / `routAt[i] + RALLY_GAP`, and let the spawner mint variant
+   squads (berserkers etc.). Field and wiring land together; nothing is
+   reserved in earlier phases.
 
 Each phase is a small PR-sized change touching a known file set:
 config.js + units.js + world.js + test/balance.js (1–2), archery.js (3),
@@ -466,7 +480,7 @@ None — all resolved:
 - **Armor does not resist morale damage.** Protection lives entirely in
   `WEAPON_VS_ARMOR`; fear already follows damage taken, so armor shields
   morale indirectly and an explicit `HIT_FEAR` scale would double-count.
-  Archetype-level morale differences, if ever wanted, are `discipline`
+  Archetype-level morale differences, if ever wanted, are `routAt`
   defaults (§8).
 - **Cost/budget armies land in phase 6 as planned.** Equal-count matrix runs
   are sufficient for tuning phases 2–4; cost only becomes meaningful when
@@ -484,6 +498,7 @@ fatigue** — stats are sustainable rates by definition (§8); **no charge
 meter** — lance damage scales off current actual speed, no stored state
 (§3); **melee stays continuous `dps × dt`** — discrete cooldown strikes
 dropped, since single-targeting (already present) is what makes flanking
-emergent, and cooldowns belong only to volleys (§3); discipline is a
-per-unit scalar decoupled from archetype, reserved now and wired when squad
-variants arrive (§8).
+emergent, and cooldowns belong only to volleys (§3); **no discipline
+scalar** — squad-variant bravery is a per-unit rout *threshold* (`routAt`)
+stored directly, the fear rates and the morale accumulator stay global and
+unchanged, and the field is added only when variants arrive (§8).

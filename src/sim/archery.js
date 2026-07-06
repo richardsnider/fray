@@ -19,13 +19,16 @@ import * as U from './units.js';
 import * as T from './terrain.js';
 import { cellCoord, cellIndexOf } from '../util/grid2d.js';
 import {
-  MAX_UNITS, WORLD_W, WORLD_H, TICK_S, UnitType,
-  TYPE_ARMOR, DMG_MULT, ARROW_COVER,
+  MAX_UNITS, WORLD_W, WORLD_H, TICK_S, Arch, Weapon, ARCH_WEAPON,
+  ARCH_DMG_REDUCE, DMG_MULT, ARROW_COVER,
   ARCHER_RANGE, ARCHER_RELOAD, ARCHER_SHOT_DMG, ARCHER_RESCAN,
   AIM_CELL, ARROW_FLIGHT,
 } from '../config.js';
 
-const { ARCHER } = UnitType;
+// Phase-1 gate: only longbow-armed units volley. Rework phase 3 parametrizes
+// range/reload/damage per bow class and adds BOW (shortbows fire on the move).
+const LONGBOW = Weapon.LONGBOW;
+const LONGBOW_DMG_MULT = DMG_MULT[Arch.LONGBOWMEN]; // interim RPS row, dies in phase 2
 const ACTIVE = U.STATE.ACTIVE;
 
 // Exported for the renderer, which draws in-flight volleys off the ring buffer.
@@ -72,7 +75,7 @@ const fire = (a, count, tick) => {
   const range2 = ARCHER_RANGE * ARCHER_RANGE;
   const reach = Math.ceil(ARCHER_RANGE / AIM_CELL);
   for (let i = 0; i < count; i++) {
-    if (U.type[i] !== ARCHER || U.state[i] !== ACTIVE || U.cooldown[i] > 0) continue;
+    if (ARCH_WEAPON[U.arch[i]] !== LONGBOW || U.state[i] !== ACTIVE || U.cooldown[i] > 0) continue;
     const xi = U.x[i];
     const yi = U.y[i];
     const enemy = counts[1 - U.team[i]];
@@ -123,8 +126,8 @@ const land = (a, count, tick, dmg) => {
     const c = cellIndexOf(U.x[i], U.y[i], AIM_CELL, cols, rows);
     const d = landing[c];
     if (d === 0) continue;
-    const tt = U.type[i];
+    const tt = U.arch[i];
     const cover = T.cover[T.cellOf(U.x[i], U.y[i])];
-    dmg[i] += (d / (c0[c] + c1[c])) * DMG_MULT[ARCHER][tt] * (1 - TYPE_ARMOR[tt]) * (1 - cover * ARROW_COVER);
+    dmg[i] += (d / (c0[c] + c1[c])) * LONGBOW_DMG_MULT[tt] * (1 - ARCH_DMG_REDUCE[tt]) * (1 - cover * ARROW_COVER);
   }
 };

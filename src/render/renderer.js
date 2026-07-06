@@ -24,7 +24,8 @@ import { viewWorldW, viewWorldH } from './camera.js';
 import { flagMetrics } from './flag.js';
 import { lerp, clamp, clamp01, smoothstep, mag } from '../util/math.js';
 import {
-  MAX_UNITS, TEAM_COLORS, UNIT_TYPE_COUNT, UnitType, WORLD_W, WORLD_H, WATER_LEVEL, AIM_CELL,
+  MAX_UNITS, TEAM_COLORS, ARCH_COUNT, ARCH_MOUNTED, ARCH_WEAPON, Weapon,
+  WORLD_W, WORLD_H, WATER_LEVEL, AIM_CELL,
 } from '../config.js';
 
 const TERRAIN_SCALE = 2;   // bake texels per world unit; 2 → crisp at max zoom. One-time cost (~1.5s).
@@ -55,14 +56,16 @@ const BAYER4 = [0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5];
 
 const ROUTING = U.STATE.ROUTING;
 
-// Per-type look: archers and pikes wear the plain team color — the archer's
-// bow arc tells them apart from a bare pike — while knights get a slight
-// white-lifted accent.
-//                     KNIGHT              ARCHER               PIKE
-const TYPE_ACCENT = [[255, 255, 255],   [0, 0, 0],           [0, 0, 0]];
-const TYPE_ACCENT_K = [0.16, 0.0, 0.0];    // blend toward accent
-const TYPE_BRIGHT = [1.12, 1.0, 1.0];      // brightness multiplier
-const TYPE_SCALE = [1.4, 0.9, 1.2];        // base dot size multiplier (the knight's horse spans 1.7×0.85 dots)
+// Per-archetype look, still hand-authored per roster entry: longbowmen and
+// pikemen wear the plain team color — the bow arc tells them apart — while
+// knights get a slight white-lifted accent. Deriving these from the armor/
+// weapon axes (heavy reads bright/metallic etc.) is deferred to rework §6;
+// the sprite *shape* already reads the axes (mounted → horse, bow → arc).
+//                     knights             longbowmen           pikemen
+const ARCH_ACCENT = [[255, 255, 255],   [0, 0, 0],           [0, 0, 0]];
+const ARCH_ACCENT_K = [0.16, 0.0, 0.0];    // blend toward accent
+const ARCH_BRIGHT = [1.12, 1.0, 1.0];      // brightness multiplier
+const ARCH_SCALE = [1.4, 0.9, 1.2];        // base dot size multiplier (the knight's horse spans 1.7×0.85 dots)
 
 const OUTLINE_STYLE = 'rgb(10,8,10)';      // near-black rim baked into sprites so units pop off any ground
 const ARROW_STYLE = 'rgb(216,204,170)';    // pale ash shafts read against the dark ground
@@ -81,25 +84,27 @@ const teamRgb = (team) => `rgb(${TEAM_COLORS[team][0]},${TEAM_COLORS[team][1]},$
 
 const clamp255 = (v) => clamp(v, 0, 255) | 0;
 
-const KNIGHT = UnitType.KNIGHT;
-const FACING_COUNT = 4; // right, left, down, up — knights turn; other types use 0
+// Bow-armed archetypes get the bow-arc sprite (either bow class).
+const isBow = (a) => ARCH_WEAPON[a] === Weapon.BOW || ARCH_WEAPON[a] === Weapon.LONGBOW;
 
-// One draw bucket per (team, type, routing, facing) combination; each bucket
-// draws one pre-baked sprite. Non-knight facings alias facing 0.
-const BIN_COUNT = TEAM_COLORS.length * UNIT_TYPE_COUNT * 2 * FACING_COUNT;
-const binIndex = (team, type, routing, facing) =>
-  ((team * UNIT_TYPE_COUNT + type) * 2 + routing) * FACING_COUNT + facing;
+const FACING_COUNT = 4; // right, left, down, up — mounted archetypes turn; foot uses 0
+
+// One draw bucket per (team, arch, routing, facing) combination; each bucket
+// draws one pre-baked sprite. Unmounted facings alias facing 0.
+const BIN_COUNT = TEAM_COLORS.length * ARCH_COUNT * 2 * FACING_COUNT;
+const binIndex = (team, arch, routing, facing) =>
+  ((team * ARCH_COUNT + arch) * 2 + routing) * FACING_COUNT + facing;
 
 // Per-bucket screen positions, refilled each frame as interleaved (x, y) pairs.
 // Int16 holds any screen coordinate and truncates like the old `sx | 0`.
 const createBins = () =>
   Array.from({ length: BIN_COUNT }, () => new Int16Array(MAX_UNITS * 2));
 
-// Fill styles: [team][type][active|routing]. Routing dots dim to 45% so broken
+// Fill styles: [team][arch][active|routing]. Routing dots dim to 45% so broken
 // units read at a glance.
 const buildStyles = () => TEAM_COLORS.map((c) =>
-  Array.from({ length: UNIT_TYPE_COUNT }, (_, t) => {
-    const acc = TYPE_ACCENT[t], k = TYPE_ACCENT_K[t], b = TYPE_BRIGHT[t];
+  Array.from({ length: ARCH_COUNT }, (_, t) => {
+    const acc = ARCH_ACCENT[t], k = ARCH_ACCENT_K[t], b = ARCH_BRIGHT[t];
     const r = clamp255(lerp(c[0] * b, acc[0], k));
     const g = clamp255(lerp(c[1] * b, acc[1], k));
     const bl = clamp255(lerp(c[2] * b, acc[2], k));
@@ -111,10 +116,11 @@ const buildStyles = () => TEAM_COLORS.map((c) =>
 );
 
 // --- unit sprites ------------------------------------------------------------
-// Every unit is a sprite stamp baked per (team, type, routing, facing) at the
+// Every unit is a sprite stamp baked per (team, arch, routing, facing) at the
 // current zoom, outline included, so the per-frame cost is one drawImage per
-// unit. Knights get an overhead-horse silhouette with four facings picked from
-// velocity; archers a square with a bow arc above; pikes the plain square.
+// unit. Mounted archetypes get an overhead-horse silhouette with four facings
+// picked from velocity; bow-armed ones a square with a bow arc above; the rest
+// the plain square.
 
 // Overhead horse: the mount seen from directly above (legs tucked under the
 // body, out of sight). A rounded-rect body carries a small head blob poking
@@ -177,9 +183,9 @@ const fillArc = (g, cx, cy, rIn, rOut) => {
     }
 };
 
-const bakeSprite = (style, type, s, o, facing) => {
+const bakeSprite = (style, arch, s, o, facing) => {
   const c = document.createElement('canvas');
-  if (type === KNIGHT) {
+  if (ARCH_MOUNTED[arch]) {
     const { W, H, m } = orientMask(horseMask(s), facing);
     c.width = W + 2 * o;
     c.height = H + 2 * o;
@@ -194,7 +200,7 @@ const bakeSprite = (style, type, s, o, facing) => {
     g.fillStyle = style;
     for (let y = 0; y < H; y++) for (let x = 0; x < W; x++)
       if (m[y * W + x]) g.fillRect(x + o, y + o, 1, 1);
-  } else if (type === UnitType.ARCHER) {
+  } else if (isBow(arch)) {
     // A pike's square with a bow arc floating just above it. The square keeps
     // the shared footprint (anchored on the unit); the bow only adds headroom.
     const box = s + 2 * o;
@@ -228,16 +234,16 @@ const bakeSprite = (style, type, s, o, facing) => {
 const buildSprites = (r, zoom) => {
   r.spriteZoom = zoom;
   for (let team = 0; team < TEAM_COLORS.length; team++) {
-    for (let type = 0; type < UNIT_TYPE_COUNT; type++) {
-      const s = Math.max(1, Math.round(1.5 * TYPE_SCALE[type] * zoom));
+    for (let arch = 0; arch < ARCH_COUNT; arch++) {
+      const s = Math.max(1, Math.round(1.5 * ARCH_SCALE[arch] * zoom));
       const o = s >= 3 ? Math.max(1, s >> 2) : 0; // rim, skipped when dots are tiny
-      const facings = type === KNIGHT ? FACING_COUNT : 1;
+      const facings = ARCH_MOUNTED[arch] ? FACING_COUNT : 1;
       for (let routing = 0; routing < 2; routing++) {
-        const style = r.styles[team][type][routing];
+        const style = r.styles[team][arch][routing];
         for (let f = 0; f < FACING_COUNT; f++) {
-          r.sprites[binIndex(team, type, routing, f)] = f < facings
-            ? bakeSprite(style, type, s, o, f)
-            : r.sprites[binIndex(team, type, routing, 0)];
+          r.sprites[binIndex(team, arch, routing, f)] = f < facings
+            ? bakeSprite(style, arch, s, o, f)
+            : r.sprites[binIndex(team, arch, routing, 0)];
         }
       }
     }
@@ -547,9 +553,9 @@ export const render = (r, alpha, cam, selBox = null) => {
 
   zoom !== r.spriteZoom && buildSprites(r, zoom);
 
-  // One pass bins each visible unit's screen position by (team, type, routing,
+  // One pass bins each visible unit's screen position by (team, arch, routing,
   // facing); each bin then stamps its pre-baked sprite. Facing only varies for
-  // knights, quantized from velocity to right/left/down/up.
+  // mounted archetypes, quantized from velocity to right/left/down/up.
   const { bins, binN, selMark } = r;
   binN.fill(0);
   let selN = 0;
@@ -561,14 +567,14 @@ export const render = (r, alpha, cam, selBox = null) => {
     const sy = (wy - camY) * zoom;
     if (sy < 0 || sy >= h) continue;
     if (U.selected[i]) { selMark[selN] = sx; selMark[selN + 1] = sy; selN += 2; }
-    const type = U.type[i];
+    const a = U.arch[i];
     let f = 0;
-    type === KNIGHT && (
+    ARCH_MOUNTED[a] && (
       f = Math.abs(U.vx[i]) >= Math.abs(U.vy[i])
         ? (U.vx[i] >= 0 ? 0 : 1)
         : (U.vy[i] >= 0 ? 2 : 3)
     );
-    const b = binIndex(U.team[i], type, U.state[i] === ROUTING ? 1 : 0, f);
+    const b = binIndex(U.team[i], a, U.state[i] === ROUTING ? 1 : 0, f);
     const bin = bins[b];
     const n = binN[b];
     bin[n] = sx;

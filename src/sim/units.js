@@ -3,7 +3,7 @@
 // iterate, zero per-unit allocation, and byte-for-byte ready to hand to WebGL
 // later without touching the data model.
 
-import { MAX_UNITS, TYPE_HP } from '../config.js';
+import { MAX_UNITS, ARCH_HP } from '../config.js';
 
 export const px = new Float32Array(MAX_UNITS); // previous-tick position (for render interpolation)
 export const py = new Float32Array(MAX_UNITS);
@@ -14,7 +14,7 @@ export const vy = new Float32Array(MAX_UNITS);
 export const hp = new Float32Array(MAX_UNITS);
 export const morale = new Float32Array(MAX_UNITS);
 export const team = new Uint8Array(MAX_UNITS);
-export const type = new Uint8Array(MAX_UNITS); // UnitType: 0 knight, 1 archer, 2 pike
+export const arch = new Uint8Array(MAX_UNITS); // archetype id (index into config.ARCHETYPES)
 export const state = new Uint8Array(MAX_UNITS);
 export const selected = new Uint8Array(MAX_UNITS); // 1 if the player has this unit selected
 export const cooldown = new Float32Array(MAX_UNITS); // archer reload timer (see sim/archery.js)
@@ -26,15 +26,15 @@ export const STATE = { ACTIVE: 0, ROUTING: 1, DEAD: 2 };
 // `count` is exported live: importers see it grow via the module binding.
 export let count = 0;
 
-export const spawn = (sx, sy, t, ut, rid = -1) => {
+export const spawn = (sx, sy, t, a, rid = -1) => {
   const i = count++;
   px[i] = x[i] = sx;
   py[i] = y[i] = sy;
   vx[i] = vy[i] = 0;
-  hp[i] = TYPE_HP[ut];
+  hp[i] = ARCH_HP[a];
   morale[i] = 100;
   team[i] = t;
-  type[i] = ut;
+  arch[i] = a;
   state[i] = STATE.ACTIVE;
   selected[i] = 0;
   cooldown[i] = 0;
@@ -51,7 +51,7 @@ const copyUnit = (dst, src) => {
   x[dst] = x[src]; y[dst] = y[src];
   vx[dst] = vx[src]; vy[dst] = vy[src];
   hp[dst] = hp[src]; morale[dst] = morale[src];
-  team[dst] = team[src]; type[dst] = type[src]; state[dst] = state[src];
+  team[dst] = team[src]; arch[dst] = arch[src]; state[dst] = state[src];
   selected[dst] = selected[src];
   cooldown[dst] = cooldown[src];
   rallyId[dst] = rallyId[src];

@@ -17,8 +17,8 @@ import {
   MORALE_MAX, ROUT_THRESHOLD, RALLY_THRESHOLD, MORALE_REGEN,
   FEAR_OUTNUMBERED, FEAR_PANIC, HIT_FEAR,
   SLOPE_SPEED, COVER_SLOW, HEIGHT_DMG, WATER_LOOK, WATER_AVOID,
-  UNIT_TYPE_COUNT, ARMY_MIX, SQUAD_SIZE, SQUAD_RADIUS, REFORM_TICKS,
-  TYPE_SPEED_MULT, TYPE_MELEE_DPS, TYPE_ARMOR, DMG_MULT,
+  ARCH_COUNT, ARMY_MIX, SQUAD_SIZE, SQUAD_RADIUS, REFORM_TICKS,
+  ARCH_SPEED, ARCH_MELEE_DPS, ARCH_DMG_REDUCE, DMG_MULT,
 } from '../config.js';
 
 const { ACTIVE, ROUTING, DEAD } = U.STATE;
@@ -75,15 +75,15 @@ const spawnArmies = () => {
   spawnArmy(W * 0.76, W * 0.94, 1);
 };
 
-// Deploy an army into its zone [x0,x1] x [y0,y1] as clustered single-type
-// squads, so each type reads as a coherent group instead of an intermixed soup.
-// Per-type counts follow ARMY_MIX; the last type absorbs any rounding remainder
-// so the total stays exactly ARMY_SIZE.
+// Deploy an army into its zone [x0,x1] x [y0,y1] as clustered single-archetype
+// squads, so each archetype reads as a coherent group instead of an intermixed
+// soup. Per-archetype counts follow ARMY_MIX; the last archetype absorbs any
+// rounding remainder so the total stays exactly ARMY_SIZE.
 const spawnArmy = (x0, x1, team) => {
   const y0 = H * 0.2, y1 = H * 0.8;
   let placed = 0;
-  for (let t = 0; t < UNIT_TYPE_COUNT; t++) {
-    const count = t === UNIT_TYPE_COUNT - 1
+  for (let t = 0; t < ARCH_COUNT; t++) {
+    const count = t === ARCH_COUNT - 1
       ? ARMY_SIZE - placed
       : Math.round(ARMY_SIZE * ARMY_MIX[t]);
     for (let n = count; n > 0; n -= SQUAD_SIZE) {
@@ -93,12 +93,12 @@ const spawnArmy = (x0, x1, team) => {
   }
 };
 
-// Scatter n units of one type in a disk around a random deploy point. The center
+// Scatter n units of one archetype in a disk around a random deploy point. The center
 // is kept a radius inside the zone so the squad stays within its army's area.
 // Each squad also gets its own rally point somewhere on the enemy's half of the
 // field, so squads fan out toward scattered objectives and the battle breaks
 // into several fronts instead of collapsing into one central mob.
-const spawnSquad = (x0, x1, y0, y1, team, type, n) => {
+const spawnSquad = (x0, x1, y0, y1, team, arch, n) => {
   const r = SQUAD_RADIUS;
   const cx = rand(Math.min(x0 + r, x1), Math.max(x1 - r, x0));
   const cy = rand(Math.min(y0 + r, y1), Math.max(y1 - r, y0));
@@ -117,7 +117,7 @@ const spawnSquad = (x0, x1, y0, y1, team, type, n) => {
       x = cx + Math.cos(ang) * rad;
       y = cy + Math.sin(ang) * rad;
     } while (T.isWaterAt(x, y) && ++tries < 8);
-    U.spawn(x, y, team, type, rid);
+    U.spawn(x, y, team, arch, rid);
   }
 };
 
@@ -157,7 +157,7 @@ export const step = (dt) => {
     const yi = U.y[i];
     const teami = U.team[i];
     const statei = U.state[i];
-    const typei = U.type[i];
+    const archi = U.arch[i];
     // This unit's terrain cell, shared by the combat height bonus and the
     // movement cover/slope factors below.
     const tcx = cellCoord(xi, T.CELL, T.cols);
@@ -210,12 +210,14 @@ export const step = (dt) => {
     // --- combat: active units strike the nearest enemy in reach ---------------
     let engaged = false;
     if (statei === ACTIVE && ceIdx !== -1 && ceD2 <= attackR2) {
-      const tt = U.type[ceIdx];
+      const tt = U.arch[ceIdx];
       // Attacking downhill (higher ground than the target) hits harder.
       const dh = T.elevation[tcell] - T.elevation[T.cellOf(U.x[ceIdx], U.y[ceIdx])];
       const bonus = clamp(1 + dh * HEIGHT_DMG, 0.5, 1.6);
-      // Per-type dps, the rock-paper-scissors matchup, and the target's armor.
-      dmg[ceIdx] += TYPE_MELEE_DPS[typei] * dt * bonus * DMG_MULT[typei][tt] * (1 - TYPE_ARMOR[tt]);
+      // Per-archetype dps, the rock-paper-scissors matchup, and the target's
+      // damage reduction (interim tables — the weapon-vs-armor matrix replaces
+      // them in rework phase 2).
+      dmg[ceIdx] += ARCH_MELEE_DPS[archi] * dt * bonus * DMG_MULT[archi][tt] * (1 - ARCH_DMG_REDUCE[tt]);
       engaged = true;
     }
 
@@ -286,10 +288,10 @@ export const step = (dt) => {
     U.vx[i] = nvx;
     U.vy[i] = nvy;
 
-    // Per-type march pace: a direct multiplier on how far this velocity carries
-    // the unit, so cavalry cover ground faster than infantry. Routing units flee
-    // quicker still.
-    const pace = TYPE_SPEED_MULT[typei] * (statei === ROUTING ? FLEE_SPEED_MULT : 1);
+    // Per-archetype march pace: a direct multiplier on how far this velocity
+    // carries the unit, so cavalry cover ground faster than infantry. Routing
+    // units flee quicker still.
+    const pace = ARCH_SPEED[archi] * (statei === ROUTING ? FLEE_SPEED_MULT : 1);
 
     // Terrain speed factor: brush slows; uphill slows, downhill speeds up.
     let tf = 1 - T.cover[tcell] * COVER_SLOW;
