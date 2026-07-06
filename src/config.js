@@ -68,8 +68,9 @@ const MOUNT_SPEED  = 1.8;                    // pace multiplier when mounted
 
 // Weapons own damage, reach, and how each interacts with armor. Melee is a
 // continuous rate (hp/sec against the closest enemy — plan §3); bows are
-// volley events (sim/archery.js) with dps 0 here, and their WEAPON_RANGE entry
-// is volley range. Lance reads as generic melee until phase 4's speed scale.
+// volley events (VOLLEY_* below + sim/archery.js) with dps 0 here, and their
+// WEAPON_RANGE entry is volley range. Lance reads as generic melee until
+// phase 4's speed scale.
 // Weapon:                  BLADE BLUNT POLEARM BOW LONGBOW LANCE
 export const WEAPON_RANGE = [   5,    5,     11,  70,   110,    6 ]; // reach (world units)
 export const WEAPON_DPS   = [  16,   14,     18,   0,     0,    8 ]; // melee hp/sec; 0 = doesn't melee
@@ -91,12 +92,30 @@ export const WEAPON_VS_ARMOR = [
   /* LANCE   */             [    1.2,      1.0,       0.9  ], // × speed scale (phase 4)
 ];
 
+// Bow classes — both fire beaten-zone volleys (sim/archery.js); the class sets
+// the volley numbers and the movement rule. Shortbows volley on the move (a
+// mounted BOW archetype is a horse archer for free); a longbow's reload counts
+// down only while standing, and any movement restarts it in full (world.js) —
+// repositioning a longbow line is a real commitment, plant it early.
+export const BowClass = { BOW: 0, LONGBOW: 1 };
+//                             BOW LONGBOW
+export const VOLLEY_DMG    = [  14,     30 ];  // damage per volley
+export const VOLLEY_RELOAD = [ 0.9,    1.6 ];  // seconds between volleys (keep > ARROW_FLIGHT:
+                                               // at most one volley per archer in the air, so the
+                                               // pending-impact ring buffer can never overflow)
+export const LONGBOW_STILL = 8;         // speed (world units/sec) that still counts as standing:
+                                        // above the ~7 u/s a formed-up unit jitters around its
+                                        // formation slot, well below the ~16 u/s open-ground march
+export const MOUNT_ARROW_MULT = 1.4;    // arrow damage vs mounted below HEAVY armor: unbarded
+                                        // horses die to massed arrows; barding shrugs them off
+
 // The roster: adding an archetype is one line. Knights carry a generic BLADE
 // until the lance mechanic lands (plan phase 4).
 export const ARCHETYPES = [
-  { name: 'knights',    armor: Armor.HEAVY,   weapon: Weapon.BLADE,   mounted: 1 },
-  { name: 'longbowmen', armor: Armor.NONE,    weapon: Weapon.LONGBOW, mounted: 0 },
-  { name: 'pikemen',    armor: Armor.ARMORED, weapon: Weapon.POLEARM, mounted: 0 },
+  { name: 'knights',     armor: Armor.HEAVY,   weapon: Weapon.BLADE,   mounted: 1 },
+  { name: 'longbowmen',  armor: Armor.NONE,    weapon: Weapon.LONGBOW, mounted: 0 },
+  { name: 'pikemen',     armor: Armor.ARMORED, weapon: Weapon.POLEARM, mounted: 0 },
+  { name: 'skirmishers', armor: Armor.NONE,    weapon: Weapon.BOW,     mounted: 0 },
 ];
 export const ARCH_COUNT = ARCHETYPES.length;
 export const Arch = Object.fromEntries(ARCHETYPES.map((a, i) => [a.name.toUpperCase(), i]));
@@ -114,23 +133,25 @@ export const ARCH_HP      = ARCHETYPES.map((a) => ARMOR_HP[a.armor]);
 export const ARCH_SPEED   = ARCHETYPES.map((a) => ARMOR_SPEED[a.armor] * (a.mounted ? MOUNT_SPEED : 1));
 export const ARCH_MELEE_DPS = ARCHETYPES.map((a) =>
   WEAPON_DPS[a.weapon] * (a.mounted && a.weapon === Weapon.POLEARM ? POLEARM_MOUNT_MULT : 1));
+export const ARCH_BOW_CLASS = ARCHETYPES.map((a) =>       // -1 = not a bow archetype
+  a.weapon === Weapon.BOW ? BowClass.BOW : a.weapon === Weapon.LONGBOW ? BowClass.LONGBOW : -1);
+export const ARCH_ARROW_MULT = ARCHETYPES.map((a) =>      // per-victim arrow impact multiplier
+  a.mounted && a.armor < Armor.HEAVY ? MOUNT_ARROW_MULT : 1);
 
-// Longbows: massed area fire (see sim/archery.js). A ready archer volleys at
-// the densest enemy cell of the aim grid within range — the beaten zone — and
-// the arrows land ARROW_FLIGHT seconds later on whoever is standing there,
-// friend or foe, damage split across the cell's occupants and reduced by the
-// weapon-vs-armor matrix and brush cover (the cover-vs-archers mechanic).
-export const ARCHER_RANGE = 110;        // bow reach (world units)
-export const ARCHER_RELOAD = 1.4;       // seconds between volleys (keep > ARROW_FLIGHT)
-export const ARCHER_SHOT_DMG = 30;      // base damage per volley
+// Bows: massed area fire (see sim/archery.js). A ready archer volleys at the
+// densest enemy cell of the aim grid within range — the beaten zone — and the
+// arrows land ARROW_FLIGHT seconds later on whoever is standing there, friend
+// or foe, damage split across the cell's occupants. The weapon-vs-armor matrix
+// and brush cover apply on impact; the shooter's own cover reduces the volley
+// at launch (arrows into or out of brush both suffer).
 export const ARROW_COVER = 0.7;         // max fractional arrow reduction in dense brush
 export const AIM_CELL = 32;             // beaten-zone cell size (world units)
 export const ARROW_FLIGHT = 0.8;        // arrow flight time (seconds) before impact
 export const ARCHER_RESCAN = 0.25;      // retry delay when no enemy is in bow range
 
 // Army composition — fraction of each spawned army by archetype (must sum to ~1).
-//                     knights longbowmen pikemen
-export const ARMY_MIX = [0.20,      0.30,   0.50];
+//                     knights longbowmen pikemen skirmishers
+export const ARMY_MIX = [0.20,      0.25,   0.40,       0.15];
 
 // Deployment: each army spawns as clustered squads of a single archetype (a block of
 // pike, a body of archers, a squadron of horse) rather than one intermixed soup,

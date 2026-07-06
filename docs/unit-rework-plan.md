@@ -1,6 +1,6 @@
 # Plan: unit rework — armor × weapon axes
 
-Status: **in implementation** — phases 1–2 landed (§10). Numbers are starting
+Status: **in implementation** — phases 1–3 landed (§10). Numbers are starting
 points, not balance.
 Source notes: `todo` (repo root) + README backlog (bow classes vs. armor tiers,
 cavalry charges, archer fire discipline).
@@ -71,9 +71,10 @@ Migration mapping: KNIGHT → knights, ARCHER → longbowmen, PIKE → pikemen.
 - `type` → `arch` (Uint8, archetype id) — same role, renamed for clarity.
 - `cooldown` (exists) — stays the ranged volley-reload timer, now per bow
   class (§4). Melee needs no per-unit combat state at all (§3).
-- **new** `steady` (Float32 or reuse pattern) — seconds stationary, for the
-  longbow stand-still rule (see §4). May be derivable from per-tick travel
-  instead of stored; decide at implementation.
+- ~~**new** `steady`~~ — *not needed, settled in phase 3*: the stand-still
+  rule's movement-*reset* formulation (§4) needs no accumulated standing time;
+  the reload branch reads the tick's actual travel directly and either ticks
+  the existing `cooldown` down or restarts it.
 - **future** `routAt` (Uint8, per-unit rout threshold) — for squad variants
   (berserkers etc., see §8). Not added in phase 1: today's global
   `ROUT_THRESHOLD` is the degenerate case (every unit the same), so the
@@ -491,9 +492,34 @@ tooltip, it doesn't belong here.
    units in node, part of it more survivors to simulate — ~25× realtime
    headroom, so the aim-grid gating fallback stays unneeded. Targeting of
    routing units stays as today: valid victims who never strike back (§8).
-3. **Ranged split.** Parametrize `archery.js` per weapon; longbow
-   stand-still reset gate (§4); shooter-side cover; `MOUNT_ARROW_MULT`. Add
-   skirmishers to the roster.
+3. **Ranged split.** ✅ *Done.* `archery.js` parametrized per bow class
+   (`BowClass` BOW/LONGBOW): per-class range/reload/damage off
+   `WEAPON_RANGE`/`VOLLEY_*`, per-class landing grids (the classes bite armor
+   differently), and each queued volley carries its damage with the shooter's
+   brush cover already paid (§4's both-ways rule). `MOUNT_ARROW_MULT` folded
+   into a flattened per-victim impact table at load. The longbow stand-still
+   rule landed as world.js's reload branch, moved after the position writes so
+   it reads the tick's actual travel — no `steady` field (§1). The one
+   surprise was the stillness epsilon: formed-up units jitter around their
+   formation slot (slot seek is constant-magnitude with no arrival easing) at
+   up to ~7 u/s, so at a first-draft epsilon of 2 u/s a planted line never
+   completed a reload; `LONGBOW_STILL = 8` u/s sits above the jitter and well
+   below the ~16 u/s march. Longbow reload 1.4 → 1.6 (§2 target); skirmishers
+   joined the roster and `ARMY_MIX`. Gate results (500 v 500, 6000 ticks,
+   5 seeds × both sides): phase 2's lopsided longbow-vs-pike margin resolved
+   *by position, not by a number* — ranged matchups are now positional, so
+   the harness grew a `--defend` matrix mode (first-named archetype holds its
+   spawn ground while the other marches onto it). Colliding marches:
+   pikemen > longbowmen 2937/1308 — a marching longbow line never fires.
+   Planted: longbowmen > pikemen 4939/4264 with the pike advance shot up and
+   routed, and > skirmishers 4728/2707 on range. Knights ride down longbows
+   either way (4836/354 colliding, 4059/504 planted), pikemen > knights holds
+   (2888/603 colliding, 2782/1755 defending; knights *defending* against
+   pikes is a near-stalemate 4776/4911 with both lines mostly intact). The
+   triangle survives with its archer leg read as "*planted* archers beat
+   pike". Skirmishers lose every static matchup and beat only marching
+   longbowmen (3878/3046) — their value is volleying on the move; cost
+   arrives phase 6.
 4. **Lance.** Speed-scaled lance damage off real per-tick displacement (no
    stored state); knights re-armed from generic melee to LANCE. The old
    charge-mechanic tuning reference lives at `585a113`.

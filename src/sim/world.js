@@ -21,10 +21,13 @@ import {
   ARCH_SPEED, ARCH_ARMOR, ARCH_WEAPON, ARCH_MOUNTED, ARCH_MELEE_DPS, Weapon,
   WEAPON_RANGE, WEAPON_DPS, WEAPON_VS_ARMOR,
   POLEARM_MIN, POLEARM_FULL_FRAC, STANDOFF_FRAC, POLEARM_VS_MOUNT,
+  BowClass, VOLLEY_RELOAD, LONGBOW_STILL,
 } from '../config.js';
 
 const { ACTIVE, ROUTING, DEAD } = U.STATE;
 const POLEARM = Weapon.POLEARM;
+const LONGBOW = Weapon.LONGBOW;
+const LONGBOW_RELOAD = VOLLEY_RELOAD[BowClass.LONGBOW];
 
 // Per-weapon derived tables, computed once at load. Bows never melee (dps 0),
 // so their long volley range widens nothing here. The scan ring is how many
@@ -166,6 +169,7 @@ export const step = (dt) => {
 
   const { cell, cols, rows, heads, next } = grid;
   const scanR2 = SEP_RADIUS * SEP_RADIUS;   // separation / awareness radius
+  const stillD2 = (LONGBOW_STILL * dt) ** 2; // travel² under which a longbow counts as standing
 
   for (let i = 0; i < count; i++) {
     const xi = U.x[i];
@@ -179,7 +183,6 @@ export const step = (dt) => {
     const tcx = cellCoord(xi, T.CELL, T.cols);
     const tcy = cellCoord(yi, T.CELL, T.rows);
     const tcell = tcy * T.cols + tcx;
-    U.cooldown[i] > 0 && (U.cooldown[i] -= dt); // archer reload
 
     // --- neighbor scan: separation (friends), plus enemy/friend awareness -----
     // Separation and the morale counts keep today's SEP_RADIUS; only the
@@ -360,6 +363,18 @@ export const step = (dt) => {
 
     U.x[i] = clamp(nx, 0, W - 1);
     U.y[i] = clamp(ny, 0, H - 1);
+
+    // --- reload (used by bows only; sim/archery.js fires when it hits 0) ------
+    // Ticks down normally, except a longbow's counts only while standing: any
+    // real movement this tick restarts it in full — the archer must stand one
+    // uninterrupted reload before the next volley, so repositioning a longbow
+    // line is a real commitment (plan §4). Shortbows volley on the move. Runs
+    // after the position writes because it needs the tick's actual travel;
+    // archery fires after this loop, so no volley outruns its reload.
+    const mdx = U.x[i] - xi, mdy = U.y[i] - yi;
+    weapi === LONGBOW && mdx * mdx + mdy * mdy > stillD2
+      ? (U.cooldown[i] = LONGBOW_RELOAD)
+      : U.cooldown[i] > 0 && (U.cooldown[i] -= dt);
   }
 
   // Volleys: loose ready archers at their beaten zones, land due arrows into dmg.

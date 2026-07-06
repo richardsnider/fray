@@ -22,8 +22,11 @@ The game itself has **zero runtime dependencies**. See package.json for dev scri
 The sim is DOM-free, so it runs headless in plain node: `npm run balance`
 plays out full battles faster than realtime and prints survivors by archetype,
 and `npm run balance:matrix` pits every archetype squad against every other to
-check the matchup triangle (`test/balance.js`). Combat numbers get tuned
-against these runs, not by eyeballing the screen.
+check the matchup triangle (`test/balance.js`). Ranged matchups are positional
+(a marching longbow line never fires — see below), so the matrix also runs
+with `--defend`, where the first-named archetype holds its ground instead of
+both sides colliding at the map center. Combat numbers get tuned against
+these runs, not by eyeballing the screen.
 
 ## Current state: vertical slice
 
@@ -39,8 +42,8 @@ against these runs, not by eyeballing the screen.
   ranks behind it — squads settle into blocks instead of balls, best-effort
   (combat and routing override it; slots over water park on the shore).
 - Units as **archetypes on two axes** — armor tier × weapon class, plus a
-  mount flag (`src/config.js`): knights (heavy, mounted), longbowmen, and
-  pikemen so far. Damage runs on a weapon-vs-armor matrix instead of an
+  mount flag (`src/config.js`): knights (heavy, mounted), longbowmen, pikemen,
+  and skirmishers so far. Damage runs on a weapon-vs-armor matrix instead of an
   authored counter table, and polearms fight at reach — near-full damage at
   the point of the pike, almost none adjacent, holding standoff instead of
   pressing — so pike blocks beat cavalry through formation depth and set
@@ -51,7 +54,14 @@ against these runs, not by eyeballing the screen.
 - Massed archery as **area fire** (`src/sim/archery.js`): each volley targets
   the densest enemy cell in bow range (the beaten zone) and lands after a
   flight delay on whoever is standing there — friend or foe — so units can
-  walk out from under a volley and arrows into a melee cut both ways.
+  walk out from under a volley and arrows into a melee cut both ways. Two
+  **bow classes**: shortbows volley on the move (skirmishers; a mounted one
+  is a horse archer for free), while a longbow's reload counts down only
+  standing still and any movement restarts it — repositioning a longbow line
+  is a real commitment, so archer-vs-pike is *positional*: a planted line
+  shoots an advance to pieces, a marching one never gets an arrow off. Brush
+  cover cuts arrows both into **and out of** the trees, and massed arrows
+  kill unbarded horses (`MOUNT_ARROW_MULT`) — barded knights shrug them.
 - Melee combat, morale, and routing with panic contagion (`src/sim/world.js`).
 - Layered rendering: the ground bake sits under the units and a semi-transparent
   dithered **canopy over-layer** sits above them (`src/render/renderer.js`), so
@@ -149,7 +159,9 @@ Checklist to measure the finished product against (✅ = met today, ⬜ = pendin
 
 **Combatants (pre-gunpowder arms)**
 - ✅ Heavy armored cavalry · longbow archers · melee/pike infantry
-- ✅ Rock-paper-scissors interplay (pike > cavalry > archers > pike, roughly)
+- ✅ Rock-paper-scissors interplay (pike > cavalry > archers > pike, roughly —
+  the archer leg reads "*planted* archers beat pike"; ranged matchups are
+  positional since the longbow stand-still rule)
 
 **Systemic warfare**
 - ✅ Morale and routing
@@ -215,12 +227,10 @@ order:
 
 ### Backlog — unscheduled design notes
 
-- **Bow classes vs. armor tiers.** Partly landed via the unit rework: the
-  weapon-vs-armor matrix (`WEAPON_VS_ARMOR`) now carries longbows-defeat-mail-
-  not-plate, with a shortbow row waiting. The shortbow class itself (fires on
-  the move, horse archers) and horse vulnerability to massed arrows
-  (`MOUNT_ARROW_MULT`) land with the ranged split —
-  `docs/unit-rework-plan.md` §4.
+- **Horse archers.** All the machinery landed with the ranged split (a
+  mounted BOW archetype volleys on the move for free); what's left is one
+  roster line in `ARCHETYPES`, natural to add when the roster widens with
+  costs — `docs/unit-rework-plan.md` phase 6.
 - **Archer fire discipline.** Volley aiming is deliberately dumb (densest
   enemy cell, friendly fire included). Hold-fire judgement — not volleying a
   melee your own pikes are winning — belongs to the AI director, not the
