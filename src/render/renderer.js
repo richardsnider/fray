@@ -56,17 +56,18 @@ const BAYER4 = [0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5];
 
 const ROUTING = U.STATE.ROUTING;
 
-// Per-archetype look, still hand-authored per roster entry: longbowmen and
-// pikemen wear the plain team color — the bow arc tells them apart — while
-// knights get a slight white-lifted accent and skirmishers read smaller and a
-// shade duller than the longbow line. Deriving these from the armor/weapon
-// axes (heavy reads bright/metallic etc.) is deferred to rework §6; the
-// sprite *shape* already reads the axes (mounted → horse, bow → arc).
-//                     knights             longbowmen           pikemen     skirmishers
-const ARCH_ACCENT = [[255, 255, 255],   [0, 0, 0],           [0, 0, 0],   [0, 0, 0]];
-const ARCH_ACCENT_K = [0.16, 0.0, 0.0, 0.0];     // blend toward accent
-const ARCH_BRIGHT = [1.12, 1.0, 1.0, 0.92];      // brightness multiplier
-const ARCH_SCALE = [1.4, 0.9, 1.2, 0.8];         // base dot size multiplier (the knight's horse spans 1.7×0.85 dots)
+// Per-archetype look, still hand-authored per roster entry: the armored foot
+// (pikemen, sergeants) wear the plain team color at the big block size, the
+// unarmored (longbowmen, skirmishers, levy) read smaller and a shade duller,
+// and only the knights get the white-lifted metallic accent — light horse is
+// the same horse silhouette in a flat, cheaper coat. Deriving these from the
+// armor/weapon axes (heavy reads bright/metallic etc.) is deferred to rework
+// §6; the sprite *shape* already reads the axes (mounted → horse, bow → arc).
+//                     knights             longbowmen  pikemen     skirmishers  levy        sergeants   light horse
+const ARCH_ACCENT = [[255, 255, 255],   [0, 0, 0],   [0, 0, 0],  [0, 0, 0],   [0, 0, 0],  [0, 0, 0],  [0, 0, 0]];
+const ARCH_ACCENT_K = [0.16, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0];  // blend toward accent
+const ARCH_BRIGHT = [1.12, 1.0, 1.0, 0.92, 0.92, 1.04, 0.96]; // brightness multiplier
+const ARCH_SCALE = [1.4, 0.9, 1.2, 0.8, 0.9, 1.2, 1.15];      // base dot size multiplier (a horse spans 1.7×0.85 dots)
 
 const OUTLINE_STYLE = 'rgb(10,8,10)';      // near-black rim baked into sprites so units pop off any ground
 const ARROW_STYLE = 'rgb(216,204,170)';    // pale ash shafts read against the dark ground

@@ -12,13 +12,13 @@ import { mulberry32 } from './rng.js';
 import { clamp, clamp01, clampIndex, lerp, mag } from '../util/math.js';
 import { cellCoord } from '../util/grid2d.js';
 import {
-  MAX_UNITS, WORLD_W, WORLD_H, ARMY_SIZE, SEEK_ACCEL, SEP_RADIUS, SEP_ACCEL, DAMPING,
+  MAX_UNITS, WORLD_W, WORLD_H, ARMY_BUDGET, SEEK_ACCEL, SEP_RADIUS, SEP_ACCEL, DAMPING,
   MAX_STEER_SPEED, FLEE_SPEED_MULT,
   MORALE_MAX, ROUT_THRESHOLD, RALLY_THRESHOLD, MORALE_REGEN,
   FEAR_OUTNUMBERED, FEAR_PANIC, HIT_FEAR,
   SLOPE_SPEED, COVER_SLOW, MUD_SLOW, HEIGHT_DMG, WATER_LOOK, WATER_AVOID,
   POLEARM_BRUSH,
-  ARCH_COUNT, ARMY_MIX, SQUAD_SIZE, SQUAD_RADIUS, REFORM_TICKS,
+  ARCH_COUNT, ARCH_COST, ARMY_MIX, SQUAD_SIZE, SQUAD_RADIUS, REFORM_TICKS,
   ARCH_SPEED, ARCH_ARMOR, ARCH_WEAPON, ARCH_MOUNTED, ARCH_MELEE_DPS, Weapon,
   WEAPON_RANGE, WEAPON_DPS, WEAPON_VS_ARMOR,
   POLEARM_MIN, POLEARM_FULL_FRAC, STANDOFF_FRAC, POLEARM_VS_MOUNT,
@@ -64,7 +64,8 @@ const stats = { team0: 0, team1: 0 };
 let rng = Math.random;
 
 // `armies` (optional, used by the balance harness) overrides the deployment:
-// { mix0, mix1, size } — per-archetype mix of either side and units per side.
+// { mix0, mix1, budget } — per-archetype budget shares of either side and
+// army points per side.
 export const init = (seed = 0, armies = null) => {
   rng = mulberry32((seed ^ 0x9e3779b9) >>> 0);
   T.generate(seed);
@@ -91,26 +92,23 @@ export const getTick = () => tick;
 export const deaths = { x: new Float32Array(MAX_UNITS), y: new Float32Array(MAX_UNITS), n: 0 };
 
 const spawnArmies = (armies) => {
-  const size = armies?.size ?? ARMY_SIZE;
-  spawnArmy(W * 0.06, W * 0.24, 0, armies?.mix0 ?? ARMY_MIX, size);
-  spawnArmy(W * 0.76, W * 0.94, 1, armies?.mix1 ?? ARMY_MIX, size);
+  const budget = armies?.budget ?? ARMY_BUDGET;
+  spawnArmy(W * 0.06, W * 0.24, 0, armies?.mix0 ?? ARMY_MIX, budget);
+  spawnArmy(W * 0.76, W * 0.94, 1, armies?.mix1 ?? ARMY_MIX, budget);
 };
 
 // Deploy an army into its zone [x0,x1] x [y0,y1] as clustered single-archetype
 // squads, so each archetype reads as a coherent group instead of an intermixed
-// soup. Per-archetype counts follow `mix`; the last archetype absorbs any
-// rounding remainder so the total stays exactly `size`.
-const spawnArmy = (x0, x1, team, mix, size) => {
+// soup. Each archetype's share of the points budget buys as many heads as its
+// cost affords (rounding wobbles the spend by at most half a unit's cost per
+// line — noise against a squad).
+const spawnArmy = (x0, x1, team, mix, budget) => {
   const y0 = H * 0.2, y1 = H * 0.8;
-  let placed = 0;
   for (let t = 0; t < ARCH_COUNT; t++) {
-    const count = t === ARCH_COUNT - 1
-      ? size - placed
-      : Math.round(size * mix[t]);
+    const count = Math.round(budget * mix[t] / ARCH_COST[t]);
     for (let n = count; n > 0; n -= SQUAD_SIZE) {
       spawnSquad(x0, x1, y0, y1, team, t, Math.min(SQUAD_SIZE, n));
     }
-    placed += count;
   }
 };
 

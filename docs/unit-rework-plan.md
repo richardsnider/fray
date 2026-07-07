@@ -1,6 +1,6 @@
 # Plan: unit rework — armor × weapon axes
 
-Status: **in implementation** — phases 1–5 landed (§10). Numbers are starting
+Status: **in implementation** — phases 1–6 landed (§10). Numbers are starting
 points, not balance.
 Source notes: `todo` (repo root) + README backlog (bow classes vs. armor tiers,
 cavalry charges, archer fire discipline).
@@ -576,10 +576,34 @@ tooltip, it doesn't belong here.
    skirmishers, now longbowmen 1791/1402 — mud-slowed approaches buy the
    standing line extra volleys. Matrix throughput ~6.0k ticks/sec (~6%
    paid to the mud read).
-6. **Roster & cost.** Full initial roster (light horse, sergeants), archetype
-   costs, budget-based army generation, per-archetype `ARMY_MIX`. The
-   balance harness's `--matrix` mode switches from equal counts to equal
-   cost here.
+6. **Roster & cost.** ✅ *Done.* The roster grew levy (the todo's
+   default/basic unit — unarmored blade), sergeants (armored blunt), and
+   light horse (unarmored blade, mounted); `ARCHETYPES` gained a `cost`,
+   `ARMY_SIZE` died for `ARMY_BUDGET`, `ARMY_MIX` became per-archetype
+   budget shares, and the spawner buys `share × budget / cost` heads per
+   line. The harness's `--size` became `--budget` (equal points a side) and
+   its verdict weighs survivors by cost — surviving *value*, not heads —
+   with margins under 3% called a draw (defend-mode melee attackers can
+   spend most of the clock marching; a verdict off two near-intact armies
+   is rounding noise). What the tune taught: at the first-draft costs
+   (knight 8, pike/sergeant/longbow 2, levy/skirmisher 1) **levy went 6–0**
+   — melee grinds follow a square law in heads, and cheap heads double-dip
+   by also feeding the outnumbered-morale drain — and light horse went 0–7.
+   Retuned to a ×2 integer scale, 12/4/4/3/3/4/4 (knights/longbowmen/
+   pikemen/skirmishers/levy/sergeants/light horse): chaff tripled while
+   quality doubled, knights relatively cheapened. Gates (collide, value):
+   knights 4–2, losing only to their designed counters (pikemen 17532/6096,
+   sergeants 15096/8076) and beating the levy mob narrowly (9744/8244 — a
+   Courtrai-flavored near-run thing); pikemen sweep every head-on collision
+   6–0 (their counter is positional); levy 3–3 with sergeants a near-draw
+   (quantity ≈ quality); light horse 1–5, its one win riding down marching
+   longbowmen. Defend: planted longbowmen still beat pikemen (19896/18612)
+   and now *repel* knights (13692/7104 — 2000 points fields only 167
+   lances), while skirmisher clouds volleying on the move beat the planted
+   line (19326/16140), a tidy counter loop; and phase 4's "planted pikemen
+   lose to knights" verdict inverts at equal cost (16808/7884 defending) —
+   emergent history is budget-sensitive. Standard battles at
+   `ARMY_BUDGET` 10000 (~2450 heads a side) stay varied across seeds.
 7. *(future, unscheduled)* **Squad variants** — add the per-unit `routAt`
    array (§8), swap the global `ROUT_THRESHOLD`/`RALLY_THRESHOLD` reads for
    `routAt[i]` / `routAt[i] + RALLY_GAP`, and let the spawner mint variant
@@ -588,7 +612,8 @@ tooltip, it doesn't belong here.
 
 Each phase is a small PR-sized change touching a known file set:
 config.js + units.js + world.js + test/balance.js (1–2), archery.js (3),
-world.js (4), terrain.js + renderer.js (5), world.js spawn + config (6).
+world.js (4), terrain.js + renderer.js (5), world.js spawn + config +
+test/balance.js + renderer look tables (6).
 
 ---
 

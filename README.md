@@ -21,8 +21,10 @@ The game itself has **zero runtime dependencies**. See package.json for dev scri
 
 The sim is DOM-free, so it runs headless in plain node: `npm run balance`
 plays out full battles faster than realtime and prints survivors by archetype,
-and `npm run balance:matrix` pits every archetype squad against every other to
-check the matchup triangle (`test/balance.js`). Ranged matchups are positional
+and `npm run balance:matrix` pits every archetype squad against every other at
+equal *cost* — each side spends the same points budget, so a knight column
+faces several times its number in levies, and verdicts compare surviving value
+(heads × cost), not heads (`test/balance.js`). Ranged matchups are positional
 (a marching longbow line never fires — see below), so the matrix also runs
 with `--defend`, where the first-named archetype holds its ground instead of
 both sides colliding at the map center. Combat numbers get tuned against
@@ -43,7 +45,11 @@ these runs, not by eyeballing the screen.
   (combat and routing override it; slots over water park on the shore).
 - Units as **archetypes on two axes** — armor tier × weapon class, plus a
   mount flag (`src/config.js`): knights (heavy, mounted), longbowmen, pikemen,
-  and skirmishers so far. Damage runs on a weapon-vs-armor matrix instead of an
+  skirmishers, levy, sergeants (armored, blunt — the maces that crack plate),
+  and light horse. Each archetype has a **cost**, and armies are bought from a
+  points budget (`ARMY_BUDGET`, with `ARMY_MIX` as budget shares) — a knight
+  costs four levies, so quality fields a fraction of quantity's heads.
+  Damage runs on a weapon-vs-armor matrix instead of an
   authored counter table, and polearms fight at reach — near-full damage at
   the point of the pike, almost none adjacent, holding standoff instead of
   pressing — so pike blocks beat cavalry through formation depth and set
@@ -187,8 +193,8 @@ not production.
 ## Roadmap
 
 Done: **combat/morale** ✅ · **camera** ✅ · **terrain effects** ✅ ·
-**squad rally marching** ✅ · **unit types** ✅. Remaining work, in dependency
-order:
+**squad rally marching** ✅ · **unit types** ✅ · **roster & costs** ✅.
+Remaining work, in dependency order:
 
 ### 1. AI director — the "plays itself" brain
 
@@ -235,9 +241,9 @@ order:
 ### Backlog — unscheduled design notes
 
 - **Horse archers.** All the machinery landed with the ranged split (a
-  mounted BOW archetype volleys on the move for free); what's left is one
-  roster line in `ARCHETYPES`, natural to add when the roster widens with
-  costs — `docs/unit-rework-plan.md` phase 6.
+  mounted BOW archetype volleys on the move for free) and the cost axis is
+  in; what's left is literally one roster line in `ARCHETYPES` plus a price,
+  whenever a battle wants them.
 - **Archer fire discipline.** Volley aiming is deliberately dumb (densest
   enemy cell, friendly fire included). Hold-fire judgement — not volleying a
   melee your own pikes are winning — belongs to the AI director, not the

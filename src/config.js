@@ -12,8 +12,11 @@ export const WORLD_W = 3200;
 export const WORLD_H = 2000;
 export const MAX_ZOOM = 4;              // CSS px per world unit at full zoom-in (camera scales it by DPR); min zoom is derived so the view can't leave the world
 
-// Vertical-slice army sizes. Bump these to stress-test the renderer/grid.
-export const ARMY_SIZE = 2500;
+// Armies are bought from a points budget (docs/unit-rework-plan.md §7): each
+// archetype has a cost, ARMY_MIX below says what share of the budget goes to
+// each, and the spawner fields as many units as the share affords. Bump the
+// budget to stress-test the renderer/grid.
+export const ARMY_BUDGET = 10000;
 
 // Steering / movement. SEEK_ACCEL + DAMPING set the base march velocity a unit
 // eases to; per-archetype pace is then a direct multiplier on travel (ARCH_SPEED).
@@ -122,15 +125,23 @@ export const LONGBOW_STILL = 8;         // speed (world units/sec) that still co
 export const MOUNT_ARROW_MULT = 1.4;    // arrow damage vs mounted below HEAVY armor: unbarded
                                         // horses die to massed arrows; barding shrugs them off
 
-// The roster: adding an archetype is one line.
+// The roster: adding an archetype is one line. Cost is the price in army
+// points (see ARMY_BUDGET) — what a soldier of that line costs to raise and
+// keep: gear on his back plus the training and horseflesh behind it. A knight
+// is a destrier, barding, plate, and a lifetime in the saddle; a levy is a
+// blade and a shove into the line. First drafts, tuned against
+// `npm run balance:matrix` (equal budget per side).
 export const ARCHETYPES = [
-  { name: 'knights',     armor: Armor.HEAVY,   weapon: Weapon.LANCE,   mounted: 1 },
-  { name: 'longbowmen',  armor: Armor.NONE,    weapon: Weapon.LONGBOW, mounted: 0 },
-  { name: 'pikemen',     armor: Armor.ARMORED, weapon: Weapon.POLEARM, mounted: 0 },
-  { name: 'skirmishers', armor: Armor.NONE,    weapon: Weapon.BOW,     mounted: 0 },
+  { name: 'knights',     armor: Armor.HEAVY,   weapon: Weapon.LANCE,   mounted: 1, cost: 12 },
+  { name: 'longbowmen',  armor: Armor.NONE,    weapon: Weapon.LONGBOW, mounted: 0, cost: 4 },
+  { name: 'pikemen',     armor: Armor.ARMORED, weapon: Weapon.POLEARM, mounted: 0, cost: 4 },
+  { name: 'skirmishers', armor: Armor.NONE,    weapon: Weapon.BOW,     mounted: 0, cost: 3 },
+  { name: 'levy',        armor: Armor.NONE,    weapon: Weapon.BLADE,   mounted: 0, cost: 3 },
+  { name: 'sergeants',   armor: Armor.ARMORED, weapon: Weapon.BLUNT,   mounted: 0, cost: 4 },
+  { name: 'light horse', armor: Armor.NONE,    weapon: Weapon.BLADE,   mounted: 1, cost: 4 },
 ];
 export const ARCH_COUNT = ARCHETYPES.length;
-export const Arch = Object.fromEntries(ARCHETYPES.map((a, i) => [a.name.toUpperCase(), i]));
+export const Arch = Object.fromEntries(ARCHETYPES.map((a, i) => [a.name.toUpperCase().replace(/\W+/g, '_'), i]));
 
 // A rider's spear keeps the reach but can't brace: mounted polearms thrust
 // one-handed at a fraction of the foot pike's rate. Baked into the flattened
@@ -139,6 +150,7 @@ const POLEARM_MOUNT_MULT = 0.6;
 
 // Flattened per-archetype lookups (plain arrays keep the stats full-precision).
 export const ARCH_ARMOR   = ARCHETYPES.map((a) => a.armor);
+export const ARCH_COST    = ARCHETYPES.map((a) => a.cost);
 export const ARCH_WEAPON  = ARCHETYPES.map((a) => a.weapon);
 export const ARCH_MOUNTED = ARCHETYPES.map((a) => a.mounted);
 export const ARCH_HP      = ARCHETYPES.map((a) => ARMOR_HP[a.armor]);
@@ -161,9 +173,12 @@ export const AIM_CELL = 32;             // beaten-zone cell size (world units)
 export const ARROW_FLIGHT = 0.8;        // arrow flight time (seconds) before impact
 export const ARCHER_RESCAN = 0.25;      // retry delay when no enemy is in bow range
 
-// Army composition — fraction of each spawned army by archetype (must sum to ~1).
-//                     knights longbowmen pikemen skirmishers
-export const ARMY_MIX = [0.20,      0.25,   0.40,       0.15];
+// Army composition — share of the army budget spent on each archetype (must
+// sum to ~1). Shares divide by cost to become head counts, so an equal share
+// buys far fewer knights than levies — the mix reads as a muster roll's purse,
+// not a head count.
+//                     knights longbowmen pikemen skirmishers levy sergeants light horse
+export const ARMY_MIX = [0.16,      0.18,   0.22,       0.06, 0.20,    0.12,       0.06];
 
 // Deployment: each army spawns as clustered squads of a single archetype (a block of
 // pike, a body of archers, a squadron of horse) rather than one intermixed soup,

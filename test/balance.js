@@ -5,9 +5,13 @@
 //
 //   npm run balance            standard mixed battles across seeds
 //   npm run balance:matrix     every archetype squad vs every other, equal
-//                              counts (equal cost once archetype costs land)
+//                              cost: each side spends the same points budget
+//                              on its one archetype, so a knight column is a
+//                              quarter the heads of the levy mob it faces —
+//                              verdicts compare surviving *value* (heads ×
+//                              cost), the only fair score across costs
 //
-// Flags: --seeds=N --ticks=N --size=N (matrix units per side). --defend flips
+// Flags: --seeds=N --ticks=N --budget=N (matrix points per side). --defend flips
 // the matrix from both sides colliding at the map center to the first-named
 // archetype holding its spawn ground while the other marches onto it — ranged
 // matchups are positional since the longbow stand-still rule (a marching
@@ -17,7 +21,7 @@
 import * as world from '../src/sim/world.js';
 import * as U from '../src/sim/units.js';
 import * as Rally from '../src/sim/rally.js';
-import { TICK_S, ARCHETYPES, ARCH_COUNT, ARMY_SIZE, WORLD_W, WORLD_H } from '../src/config.js';
+import { TICK_S, ARCHETYPES, ARCH_COUNT, ARCH_COST, ARMY_BUDGET, WORLD_W, WORLD_H } from '../src/config.js';
 
 const arg = (name, dflt) => {
   const a = process.argv.find((s) => s.startsWith(`--${name}=`));
@@ -26,8 +30,8 @@ const arg = (name, dflt) => {
 const MATRIX = process.argv.includes('--matrix');
 const DEFEND = process.argv.includes('--defend');
 const SEEDS = arg('seeds', 5);
-const TICKS = arg('ticks', 6000);  // × TICK_S ≈ 3 sim-minutes
-const SIZE = arg('size', 500);     // matrix mode: one squad per side
+const TICKS = arg('ticks', 6000);   // × TICK_S ≈ 3 sim-minutes
+const BUDGET = arg('budget', 2000); // matrix mode: army points per side
 
 const names = ARCHETYPES.map((a) => a.name);
 const onehot = (a) => ARCHETYPES.map((_, i) => (i === a ? 1 : 0));
@@ -66,7 +70,7 @@ let ticksRun = 0;
 
 if (MATRIX) {
   console.log(`matrix${DEFEND ? ' (first named defends its ground)' : ''}: ` +
-    `${SIZE} vs ${SIZE}, ${TICKS} ticks, ${SEEDS} seeds × both sides\n`);
+    `${BUDGET} points a side, ${TICKS} ticks, ${SEEDS} seeds × both sides\n`);
   for (let a = 0; a < ARCH_COUNT; a++) {
     for (let b = DEFEND ? 0 : a + 1; b < ARCH_COUNT; b++) {
       if (a === b) continue;
@@ -76,22 +80,31 @@ if (MATRIX) {
       // of every pair run).
       let sa = 0, sb = 0;
       for (let seed = 1; seed <= SEEDS; seed++) {
-        const s1 = run(seed, { mix0: onehot(a), mix1: onehot(b), size: SIZE }, DEFEND ? 0 : 'center');
+        const s1 = run(seed, { mix0: onehot(a), mix1: onehot(b), budget: BUDGET }, DEFEND ? 0 : 'center');
         sa += s1[0][a]; sb += s1[1][b];
-        const s2 = run(seed, { mix0: onehot(b), mix1: onehot(a), size: SIZE }, DEFEND ? 1 : 'center');
+        const s2 = run(seed, { mix0: onehot(b), mix1: onehot(a), budget: BUDGET }, DEFEND ? 1 : 'center');
         sa += s2[1][a]; sb += s2[0][b];
         ticksRun += 2 * TICKS;
       }
-      const n = SEEDS * 2 * SIZE;
-      const verdict = sa === sb ? 'draw' : sa > sb ? names[a] : names[b];
+      // Sides field different head counts, so the verdict weighs survivors by
+      // cost: the winner is whoever holds more surviving points of the equal
+      // budgets, not more heads. Margins under a few percent are called a draw
+      // — in defend mode a melee attacker can spend most of the clock marching,
+      // and a verdict off a sliver of two near-intact armies is rounding noise.
+      const va = sa * ARCH_COST[a], vb = sb * ARCH_COST[b];
+      const fielded = (x) => Math.round(BUDGET / ARCH_COST[x]);
+      const verdict = Math.abs(va - vb) * 2 <= 0.03 * (va + vb) ? 'draw'
+        : va > vb ? names[a] : names[b];
       console.log(
-        `${names[a].padEnd(11)} vs ${names[b].padEnd(11)}  ` +
-        `${String(sa).padStart(5)} / ${String(sb).padStart(5)} of ${n}  → ${verdict}`,
+        `${names[a].padEnd(11)} ×${String(fielded(a)).padEnd(4)} vs ` +
+        `${names[b].padEnd(11)} ×${String(fielded(b)).padEnd(4)}  ` +
+        `${String(sa).padStart(5)} / ${String(sb).padStart(5)} alive  ` +
+        `value ${String(va).padStart(5)} / ${String(vb).padStart(5)}  → ${verdict}`,
       );
     }
   }
 } else {
-  console.log(`standard battle: ${ARMY_SIZE} vs ${ARMY_SIZE}, ${TICKS} ticks, ${SEEDS} seeds\n`);
+  console.log(`standard battle: ${ARMY_BUDGET} points a side, ${TICKS} ticks, ${SEEDS} seeds\n`);
   for (let seed = 1; seed <= SEEDS; seed++) {
     const s = run(seed, null, null);
     ticksRun += TICKS;
