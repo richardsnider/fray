@@ -63,11 +63,12 @@ const ROUTING = U.STATE.ROUTING;
 // the same horse silhouette in a flat, cheaper coat. Deriving these from the
 // armor/weapon axes (heavy reads bright/metallic etc.) is deferred to rework
 // §6; the sprite *shape* already reads the axes (mounted → horse, bow → arc).
-//                     knights             longbowmen  pikemen     skirmishers  levy        sergeants   light horse
-const ARCH_ACCENT = [[255, 255, 255],   [0, 0, 0],   [0, 0, 0],  [0, 0, 0],   [0, 0, 0],  [0, 0, 0],  [0, 0, 0]];
-const ARCH_ACCENT_K = [0.16, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0];  // blend toward accent
-const ARCH_BRIGHT = [1.12, 1.0, 1.0, 0.92, 0.92, 1.04, 0.96]; // brightness multiplier
-const ARCH_SCALE = [1.4, 0.9, 1.2, 0.8, 0.9, 1.2, 1.15];      // base dot size multiplier (a horse spans 1.7×0.85 dots)
+//                     knights             longbowmen  pikemen     skirmishers  levy        sergeants   light horse  h.archers   mtd serg    hobilars
+const ARCH_ACCENT = [[255, 255, 255],   [0, 0, 0],   [0, 0, 0],  [0, 0, 0],   [0, 0, 0],  [0, 0, 0],  [0, 0, 0],   [0, 0, 0],  [0, 0, 0],  [0, 0, 0]];
+const ARCH_ACCENT_K = [0.16, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0];   // blend toward accent
+const ARCH_BRIGHT = [1.12, 1.0, 1.0, 0.92, 0.92, 1.04, 0.96, 0.94, 1.06, 1.02]; // brightness multiplier: armored horse a shade
+                                                                                // brighter than light, duller than knights
+const ARCH_SCALE = [1.4, 0.9, 1.2, 0.8, 0.9, 1.2, 1.15, 1.05, 1.3, 1.25];    // base dot size multiplier (a horse spans 1.7×0.85 dots)
 
 const OUTLINE_STYLE = 'rgb(10,8,10)';      // near-black rim baked into sprites so units pop off any ground
 const ARROW_STYLE = 'rgb(216,204,170)';    // pale ash shafts read against the dark ground
@@ -189,19 +190,35 @@ const bakeSprite = (style, arch, s, o, facing) => {
   const c = document.createElement('canvas');
   if (ARCH_MOUNTED[arch]) {
     const { W, H, m } = orientMask(horseMask(s), facing);
-    c.width = W + 2 * o;
-    c.height = H + 2 * o;
+    // A mounted bow (horse archers) keeps the horse silhouette and floats the
+    // same bow arc above it as the foot archers — facing-independent, a badge
+    // rather than a wielded prop, so all four orientations share the headroom.
+    const bow = isBow(arch);
+    const R = bow ? Math.max(2, Math.round(s * 0.5)) : 0;   // bow radius
+    const t = bow ? Math.max(1, Math.round(s * 0.18)) : 0;  // stave thickness
+    const yoff = bow ? R + o + Math.max(1, o) : 0;          // arc + clearance above the horse
+    c.width = Math.max(W + 2 * o, bow ? 2 * (R + o) + 1 : 0);
+    c.height = H + 2 * o + yoff;
     const g = c.getContext('2d');
+    const xoff = (c.width - (W + 2 * o)) >> 1;
     // Dilate-then-fill: stamp each filled pixel as an o-inflated block in the
     // rim color first, then the 1px fill on top, leaving an o-thick outline.
     if (o) {
       g.fillStyle = OUTLINE_STYLE;
       for (let y = 0; y < H; y++) for (let x = 0; x < W; x++)
-        if (m[y * W + x]) g.fillRect(x, y, 1 + 2 * o, 1 + 2 * o);
+        if (m[y * W + x]) g.fillRect(x + xoff, y + yoff, 1 + 2 * o, 1 + 2 * o);
     }
     g.fillStyle = style;
     for (let y = 0; y < H; y++) for (let x = 0; x < W; x++)
-      if (m[y * W + x]) g.fillRect(x + o, y + o, 1, 1);
+      if (m[y * W + x]) g.fillRect(x + xoff + o, y + yoff + o, 1, 1);
+    if (bow) {
+      const bx = c.width >> 1, by = R + o;
+      o && (g.fillStyle = OUTLINE_STYLE, fillArc(g, bx, by, R - t - o, R + o));
+      g.fillStyle = style;
+      fillArc(g, bx, by, R - t, R);
+    }
+    // Anchor on the horse's center so the arc reads as floating above the unit.
+    return { c, ax: c.width >> 1, ay: yoff + o + (H >> 1) };
   } else if (isBow(arch)) {
     // A pike's square with a bow arc floating just above it. The square keeps
     // the shared footprint (anchored on the unit); the bow only adds headroom.

@@ -9,7 +9,7 @@ import * as Input from './input/input.js';
 import * as world from './sim/world.js';
 import * as Command from './sim/command.js';
 import { hashSeed } from './sim/rng.js';
-import { TICK_MS, TICK_S, WORLD_W, WORLD_H } from './config.js';
+import { TICK_MS, TICK_S, WORLD_W, WORLD_H, ARCHETYPES } from './config.js';
 
 const canvas = document.getElementById('c');
 const hud = document.getElementById('hud');
@@ -103,11 +103,16 @@ const frame = (now) => {
   fps += (1000 / Math.max(dt, 1) - fps) * 0.1;
   const s = world.getStats();
   const sel = Command.getSelectionCounts();
+  // Only archetypes present in the selection get a HUD entry, so a mixed grab
+  // reads as a muster roll and a single-squad grab stays one word.
+  let selStr = '';
+  for (let a = 0; a < sel.byArch.length; a++)
+    sel.byArch[a] > 0 && (selStr += `  ${ARCHETYPES[a].name} ${sel.byArch[a]}`);
   hud.textContent =
     `silver ${s.team0}   red ${s.team1}\n` +
     `fps    ${fps.toFixed(0)}   zoom ${camera.zoom.toFixed(2)}\n` +
     `sim    ${simMs.toFixed(1)}ms   speed ${gameSpeed === 0 ? 'paused' : gameSpeed + '×'}\n` +
-    `selected ${sel.total}   inf ${sel.pike}  arch ${sel.archer}  cav ${sel.knight}\n` +
+    `selected ${sel.total}${selStr}\n` +
     `left-drag: select   left-click: move   right-drag/WASD: pan   wheel: zoom   space: pause`;
 
   requestAnimationFrame(frame);

@@ -31,7 +31,11 @@ const MARSH_GATE = 0.67;           // marsh-noise threshold for a bog patch
 // Folded into the value-noise hash so each seed yields a distinct battlefield.
 let seed = 0;
 
-export const generate = (s = 0) => {
+// `paint` (test-only, used by the balance harness's scenarios): a
+// deterministic fn(wx, wy) → { elev = 0.5, cover = 0, water = false,
+// mud = false } that replaces the fbm landforms, so a scenario battle
+// controls the ground exactly — a flat field, uniform brush, one muddy half.
+export const generate = (s = 0, paint = null) => {
   seed = s >>> 0;
   cols = Math.ceil(WORLD_W / CELL) + 1;
   rows = Math.ceil(WORLD_H / CELL) + 1;
@@ -39,6 +43,19 @@ export const generate = (s = 0) => {
   elevation = new Float32Array(n);
   ground = new Uint8Array(n);
   cover = new Float32Array(n);
+
+  if (paint) {
+    for (let cy = 0; cy < rows; cy++) {
+      for (let cx = 0; cx < cols; cx++) {
+        const i = cy * cols + cx;
+        const p = paint(cx * CELL, cy * CELL);
+        elevation[i] = p.elev ?? 0.5;
+        ground[i] = p.water ? WATER : p.mud ? MUD : LAND;
+        cover[i] = p.water ? 0 : p.cover ?? 0;
+      }
+    }
+    return;
+  }
 
   const NORM = 1 / 0.9375; // fbm() max, to normalize into 0..1
   for (let cy = 0; cy < rows; cy++) {

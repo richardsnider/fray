@@ -3,9 +3,10 @@
 // zone"); the arrows land ARROW_FLIGHT seconds later on whoever is standing in
 // that cell — friend or foe — with the damage split across the cell's occupants.
 // Both bow classes fire this way; the class picks range/reload/damage and how
-// arrows meet armor, and the longbow's stand-still reload gate lives in
-// world.js (a longbow cooldown only reaches 0 here after an uninterrupted
-// standing reload).
+// arrows meet armor. What silences a bow (rework2 plan B §3): an enemy at
+// arm's length (the pressed flag, set by world.js's neighbor scan), a beaten
+// zone nearer than the class minimum range, and — longbows only — a stillness
+// clock that hasn't reached LONGBOW_SET (world.js zeroes it on movement).
 // No per-arrow entities: firing pushes (cell, land-tick) onto a ring buffer,
 // landing folds the queued damage into the world's dmg accumulator. Cost is
 // O(archers + units) per tick, replacing the per-archer neighbor-list scans, and
@@ -25,19 +26,18 @@ import { cellCoord, cellIndexOf } from '../util/grid2d.js';
 import {
   MAX_UNITS, WORLD_W, WORLD_H, TICK_S, Weapon, ARCH_BOW_CLASS, ARCH_ARMOR,
   ARCH_ARROW_MULT, WEAPON_RANGE, WEAPON_VS_ARMOR, ARROW_COVER,
-  VOLLEY_DMG, VOLLEY_RELOAD, ARCHER_RESCAN,
+  VOLLEY_DMG, VOLLEY_RELOAD, BOW_MIN_RANGE, BowClass, LONGBOW_SET, ARCHER_RESCAN,
   AIM_CELL, ARROW_FLIGHT,
 } from '../config.js';
 
 const ACTIVE = U.STATE.ACTIVE;
+const LONGBOW_CLASS = BowClass.LONGBOW;
 
-// Per-class derived tables, indexed by BowClass (BOW 0, LONGBOW 1). The rest
-// of the class split lives elsewhere: which units volley at all is
-// ARCH_BOW_CLASS, and the longbow stand-still reload rule is world.js's
-// cooldown branch — by the time a longbow's cooldown reaches 0 here it has
-// already stood its full uninterrupted reload.
+// Per-class derived tables, indexed by BowClass (BOW 0, LONGBOW 1). Which
+// units volley at all is ARCH_BOW_CLASS.
 const CLASS_WEAPON = [Weapon.BOW, Weapon.LONGBOW];
 const RANGE2 = CLASS_WEAPON.map((w) => WEAPON_RANGE[w] ** 2);
+const MIN2 = BOW_MIN_RANGE.map((r) => r * r);
 const REACH = CLASS_WEAPON.map((w) => Math.ceil(WEAPON_RANGE[w] / AIM_CELL));
 // Impact multiplier per victim archetype: weapon-vs-armor × the mount arrow
 // vulnerability (unbarded horses die to massed arrows; barded knights shrug).
@@ -92,7 +92,11 @@ const fire = (a, count, tick) => {
   for (let i = 0; i < count; i++) {
     const k = ARCH_BOW_CLASS[U.arch[i]];
     if (k === -1 || U.state[i] !== ACTIVE || U.cooldown[i] > 0) continue;
+    // Pressed (an enemy at arm's length) silences either class; a longbow
+    // additionally may not loose until it has stood LONGBOW_SET seconds.
+    if (U.pressed[i] || (k === LONGBOW_CLASS && U.still[i] < LONGBOW_SET)) continue;
     const range2 = RANGE2[k];
+    const min2 = MIN2[k];
     const reach = REACH[k];
     const xi = U.x[i];
     const yi = U.y[i];
@@ -101,7 +105,9 @@ const fire = (a, count, tick) => {
     const cy = cellCoord(yi, AIM_CELL, rows);
     const x0 = Math.max(cx - reach, 0), x1 = Math.min(cx + reach, cols - 1);
     const y0 = Math.max(cy - reach, 0), y1 = Math.min(cy + reach, rows - 1);
-    // Beaten zone = densest enemy cell whose center is in range; nearest wins ties.
+    // Beaten zone = densest enemy cell whose center is in range but not
+    // inside the class minimum — no dropping arrows at your own feet;
+    // nearest wins ties.
     let best = -1, bestN = 0, bestD2 = Infinity;
     for (let gy = y0; gy <= y1; gy++) {
       for (let gx = x0; gx <= x1; gx++) {
@@ -111,7 +117,7 @@ const fire = (a, count, tick) => {
         const dx = (gx + 0.5) * AIM_CELL - xi;
         const dy = (gy + 0.5) * AIM_CELL - yi;
         const d2 = dx * dx + dy * dy;
-        (d2 <= range2 && (e > bestN || (e === bestN && d2 < bestD2))) &&
+        (d2 <= range2 && d2 >= min2 && (e > bestN || (e === bestN && d2 < bestD2))) &&
           (best = c, bestN = e, bestD2 = d2);
       }
     }

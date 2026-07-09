@@ -9,7 +9,7 @@ import * as Rally from './rally.js';
 import * as Formation from './formation.js';
 import * as Command from './command.js';
 import { mulberry32 } from './rng.js';
-import { clamp, clamp01, clampIndex, lerp, mag } from '../util/math.js';
+import { clamp, clamp01, clampIndex, mag } from '../util/math.js';
 import { cellCoord } from '../util/grid2d.js';
 import {
   MAX_UNITS, WORLD_W, WORLD_H, ARMY_BUDGET, SEEK_ACCEL, SEP_RADIUS, SEP_ACCEL, DAMPING,
@@ -21,15 +21,14 @@ import {
   ARCH_COUNT, ARCH_COST, ARMY_MIX, SQUAD_SIZE, SQUAD_RADIUS, REFORM_TICKS,
   ARCH_SPEED, ARCH_ARMOR, ARCH_WEAPON, ARCH_MOUNTED, ARCH_MELEE_DPS, Weapon,
   WEAPON_RANGE, WEAPON_DPS, WEAPON_VS_ARMOR,
-  POLEARM_MIN, POLEARM_FULL_FRAC, STANDOFF_FRAC, POLEARM_VS_MOUNT,
-  BowClass, VOLLEY_RELOAD, LONGBOW_STILL, LANCE_SPEED_MULT,
+  POLEARM_BAND, STANDOFF_FRAC, IMPALE_MULT,
+  LONGBOW_STILL, LANCE_SPEED_MULT,
 } from '../config.js';
 
 const { ACTIVE, ROUTING, DEAD } = U.STATE;
 const POLEARM = Weapon.POLEARM;
 const LONGBOW = Weapon.LONGBOW;
 const LANCE = Weapon.LANCE;
-const LONGBOW_RELOAD = VOLLEY_RELOAD[BowClass.LONGBOW];
 
 // Per-weapon derived tables, computed once at load. Bows never melee (dps 0),
 // so their long volley range widens nothing here. The scan ring is how many
@@ -37,7 +36,7 @@ const LONGBOW_RELOAD = VOLLEY_RELOAD[BowClass.LONGBOW];
 // reach — 1 (the 3×3 separation walk) for everything but polearm's reach 11.
 const MELEE_R2 = WEAPON_RANGE.map((r, w) => (WEAPON_DPS[w] > 0 ? r * r : 0));
 const STANDOFF2 = WEAPON_RANGE.map((r, w) => (w === POLEARM ? (r * STANDOFF_FRAC) ** 2 : 0));
-const POLEARM_FULL = WEAPON_RANGE[POLEARM] * POLEARM_FULL_FRAC; // distance of full-rate reach damage
+const BAND_MIN2 = (WEAPON_RANGE[POLEARM] * POLEARM_BAND) ** 2; // polearm damage-band floor²
 const ENEMY_R2 = MELEE_R2.map((r2) => Math.max(r2, SEP_RADIUS * SEP_RADIUS));
 const SCAN_RING = ENEMY_R2.map((r2) => Math.ceil(Math.sqrt(r2) / SEP_RADIUS));
 
@@ -64,11 +63,13 @@ const stats = { team0: 0, team1: 0 };
 let rng = Math.random;
 
 // `armies` (optional, used by the balance harness) overrides the deployment:
-// { mix0, mix1, budget } — per-archetype budget shares of either side and
-// army points per side.
+// { mix0, mix1, budget, zones, yband, paint } — per-archetype budget shares
+// of either side, army points per side, spawn zones as [[x0,x1],[x0,x1]]
+// fractions of world width (yband likewise of height, shared by both sides),
+// and a synthetic-terrain paint fn (terrain.js).
 export const init = (seed = 0, armies = null) => {
   rng = mulberry32((seed ^ 0x9e3779b9) >>> 0);
-  T.generate(seed);
+  T.generate(seed, armies?.paint ?? null);
   grid = Grid.create(W, H, SEP_RADIUS);
   archery = Archery.create();
   tick = 0;
@@ -93,8 +94,10 @@ export const deaths = { x: new Float32Array(MAX_UNITS), y: new Float32Array(MAX_
 
 const spawnArmies = (armies) => {
   const budget = armies?.budget ?? ARMY_BUDGET;
-  spawnArmy(W * 0.06, W * 0.24, 0, armies?.mix0 ?? ARMY_MIX, budget);
-  spawnArmy(W * 0.76, W * 0.94, 1, armies?.mix1 ?? ARMY_MIX, budget);
+  const z = armies?.zones;
+  const yb = armies?.yband ?? [0.2, 0.8];
+  spawnArmy(W * (z?.[0][0] ?? 0.06), W * (z?.[0][1] ?? 0.24), H * yb[0], H * yb[1], 0, armies?.mix0 ?? ARMY_MIX, budget);
+  spawnArmy(W * (z?.[1][0] ?? 0.76), W * (z?.[1][1] ?? 0.94), H * yb[0], H * yb[1], 1, armies?.mix1 ?? ARMY_MIX, budget);
 };
 
 // Deploy an army into its zone [x0,x1] x [y0,y1] as clustered single-archetype
@@ -102,8 +105,7 @@ const spawnArmies = (armies) => {
 // soup. Each archetype's share of the points budget buys as many heads as its
 // cost affords (rounding wobbles the spend by at most half a unit's cost per
 // line — noise against a squad).
-const spawnArmy = (x0, x1, team, mix, budget) => {
-  const y0 = H * 0.2, y1 = H * 0.8;
+const spawnArmy = (x0, x1, y0, y1, team, mix, budget) => {
   for (let t = 0; t < ARCH_COUNT; t++) {
     const count = Math.round(budget * mix[t] / ARCH_COST[t]);
     for (let n = count; n > 0; n -= SQUAD_SIZE) {
@@ -165,9 +167,9 @@ export const step = (dt) => {
   // (sim/command.js).
   tick % REFORM_TICKS === 0 && Formation.reassignAll();
 
-  Grid.build(grid, count, U.x, U.y);
+  Grid.build(grid, count, U.x, U.y, U.team);
 
-  const { cell, cols, rows, heads, next } = grid;
+  const { cell, cols, rows, heads, next, teamCounts } = grid;
   const scanR2 = SEP_RADIUS * SEP_RADIUS;   // separation / awareness radius
   const stillD2 = (LONGBOW_STILL * dt) ** 2; // travel² under which a longbow counts as standing
   // Full-gallop travel per tick before pace: the equilibrium of the steering
@@ -201,6 +203,7 @@ export const step = (dt) => {
 
     const ring = SCAN_RING[weapi];
     const enemyR2 = ENEMY_R2[weapi];
+    const foeCount = teamCounts[1 - teami];
     const cx = cellCoord(xi, cell, cols);
     const cy = cellCoord(yi, cell, rows);
     for (let oy = -ring; oy <= ring; oy++) {
@@ -209,7 +212,17 @@ export const step = (dt) => {
       for (let ox = -ring; ox <= ring; ox++) {
         const gx = cx + ox;
         if (gx < 0 || gx >= cols) continue;
-        let j = heads[gy * cols + gx];
+        const gc = gy * cols + gx;
+        // Cells beyond the 3×3 core exist only for the closest-enemy search:
+        // in the grid's start-of-tick snapshot, anything within SEP_RADIUS 6
+        // sits inside the core at cell size 6. So an enemy-empty outer cell
+        // has nothing to offer — skip it without walking its occupants. This
+        // is what keeps a *marching* pike block — 25 cells of friends — at
+        // ring-1 cost. (A friend that moved close *this* tick can still be
+        // listed in an outer cell; skipping it matches the ring-1 walk every
+        // other weapon gets, which never saw such friends either.)
+        if (ring > 1 && (ox < -1 || ox > 1 || oy < -1 || oy > 1) && foeCount[gc] === 0) continue;
+        let j = heads[gc];
         while (j !== -1) {
           if (j !== i) {
             const dx = xi - U.x[j];
@@ -237,39 +250,59 @@ export const step = (dt) => {
       }
     }
 
+    // An enemy inside the awareness radius pins this unit for archery: you
+    // can't work a bow with a blade on you (sim/archery.js reads the flag).
+    U.pressed[i] = ceIdx !== -1 && ceD2 < scanR2 ? 1 : 0;
+
     // --- combat: active units strike the nearest enemy in weapon reach --------
     // Continuous dps × dt into the accumulator, single-target — which is what
     // makes flanking emergent: three attackers pour in 3× and eat 1× back.
     // Damage = weapon rate × the weapon-vs-armor matrix × the height bonus ×
-    // the polearm reach profile: a pike at near-max reach fights at full rate
-    // but adjacent it is nearly harmless, so the block's reach — rank 2
-    // fighting over rank 1's shoulder — beats cavalry, and a blade that
-    // burrows into the ranks faces blunted points. Bows have melee dps 0 and
-    // never engage (MELEE_R2 = 0); their fight is sim/archery.js.
+    // the polearm rules: a hard damage band (full rate between POLEARM_BAND
+    // and max reach, zero inside — a blade that burrows past the points faces
+    // harmless pikes, while rank 2 fights over rank 1's shoulder) times the
+    // impalement rule (the victim's closing speed onto the point, squared —
+    // the lance rule in reverse; a galloping horse impales itself, a standing
+    // knight is an ordinary target) cut by the wielder's brush cover (no room
+    // to work a 16-foot shaft in trees). Bows have melee dps 0 and never
+    // engage (MELEE_R2 = 0); their fight is sim/archery.js.
     let engaged = false;
     let lanceDmg = 0;   // a lance strike waits on this tick's travel, applied below
     if (statei === ACTIVE && ceIdx !== -1 && ceD2 <= MELEE_R2[weapi]) {
-      // Attacking downhill (higher ground than the target) hits harder.
-      const dh = T.elevation[tcell] - T.elevation[T.cellOf(U.x[ceIdx], U.y[ceIdx])];
-      const bonus = clamp(1 + dh * HEIGHT_DMG, 0.5, 1.6);
-      const ta = U.arch[ceIdx];
-      // Polearm: the reach profile, times the anti-cavalry bonus — a set pike
-      // stops the horse itself, which is why levy pikes stop knights — cut by
-      // the wielder's brush cover: no room to work a 16-foot shaft in trees.
-      const prof = weapi === POLEARM
-        ? lerp(POLEARM_MIN, 1, clamp01(Math.sqrt(ceD2) / POLEARM_FULL))
-          * (ARCH_MOUNTED[ta] ? POLEARM_VS_MOUNT : 1)
-          * (1 - T.cover[tcell] * POLEARM_BRUSH)
-        : 1;
-      // ARCH_MELEE_DPS is the weapon rate with the mount interaction baked in
-      // (a rider's polearm keeps reach but can't brace — config.js). The lance
-      // scales with the striker's travel, known only after the movement below —
-      // park its base rate for the late add; dmg[] resolves after the full
-      // pass, so a late accumulate changes nothing else.
-      const d = ARCH_MELEE_DPS[archi] * dt * bonus * prof
-        * WEAPON_VS_ARMOR[weapi][ARCH_ARMOR[ta]];
-      weapi === LANCE ? (lanceDmg = d) : (dmg[ceIdx] += d);
-      engaged = true;
+      engaged = true; // even a pike with the enemy inside its points is fighting, not resting
+      if (weapi !== POLEARM || ceD2 >= BAND_MIN2) {
+        // Attacking downhill (higher ground than the target) hits harder.
+        const dh = T.elevation[tcell] - T.elevation[T.cellOf(U.x[ceIdx], U.y[ceIdx])];
+        const bonus = clamp(1 + dh * HEIGHT_DMG, 0.5, 1.6);
+        const ta = U.arch[ceIdx];
+        let prof = 1;
+        if (weapi === POLEARM) {
+          // Impalement: the victim's actual travel last movement tick (tvx/tvy,
+          // real displacement after terrain and clamps), projected onto the
+          // line toward this wielder, normalized by the *unmounted* full-march
+          // travel — so closingFrac ~1 is infantry pressing in at a walk and
+          // ~1.26–1.8 is horse arriving at canter/gallop, no mount check on
+          // the victim. The *wielder* must be on foot: setting a point against
+          // a charge takes planted feet and ground behind the butt — this is
+          // the can't-brace-on-a-horse rule. A rider's spear keeps its reach
+          // and thrust rate but never earns the charge spike.
+          let imp = 0;
+          if (!ARCH_MOUNTED[archi]) {
+            const inv = 1 / Math.sqrt(ceD2);
+            const closing = (U.tvx[ceIdx] * (xi - U.x[ceIdx]) + U.tvy[ceIdx] * (yi - U.y[ceIdx])) * inv / gallop;
+            closing > 0 && (imp = IMPALE_MULT * closing * closing);
+          }
+          prof = (1 + imp) * (1 - T.cover[tcell] * POLEARM_BRUSH);
+        }
+        // ARCH_MELEE_DPS is the weapon rate with the mount interactions baked
+        // in (config.js). The lance scales with the striker's travel, known
+        // only after the movement below — park its base rate for the late
+        // add; dmg[] resolves after the full pass, so a late accumulate
+        // changes nothing else.
+        const d = ARCH_MELEE_DPS[archi] * dt * bonus * prof
+          * WEAPON_VS_ARMOR[weapi][ARCH_ARMOR[ta]];
+        weapi === LANCE ? (lanceDmg = d) : (dmg[ceIdx] += d);
+      }
     }
 
     // --- morale (everything except damage-fear, which needs the final dmg) ----
@@ -377,6 +410,14 @@ export const step = (dt) => {
     U.x[i] = clamp(nx, 0, W - 1);
     U.y[i] = clamp(ny, 0, H - 1);
 
+    // Actual travel this tick — the real displacement after terrain, pace and
+    // clamps. Stored per unit: the impalement rule reads a *victim's* travel
+    // (units later in this pass see this tick's, earlier ones last tick's —
+    // both are "current speed" at tick scale, and it stays deterministic).
+    const tvx = U.x[i] - xi, tvy = U.y[i] - yi;
+    U.tvx[i] = tvx;
+    U.tvy[i] = tvy;
+
     // --- lance: the parked strike, scaled by this tick's actual travel --------
     // speedFrac normalizes the real displacement (terrain, pace, water clamps
     // and all) by this unit's own full gallop: 0 standing … 1 at open-field
@@ -387,22 +428,20 @@ export const step = (dt) => {
     // burst: the press bleeds the speed within a few ticks, milling in a
     // melee scores near the naked standing rate.
     if (lanceDmg > 0) {
-      const ldx = U.x[i] - xi, ldy = U.y[i] - yi;
-      const frac = clamp01((ldx * ldx + ldy * ldy) / (gallop * ARCH_SPEED[archi]) ** 2);
+      const frac = clamp01((tvx * tvx + tvy * tvy) / (gallop * ARCH_SPEED[archi]) ** 2);
       dmg[ceIdx] += lanceDmg * (1 + frac * LANCE_SPEED_MULT);
     }
 
-    // --- reload (used by bows only; sim/archery.js fires when it hits 0) ------
-    // Ticks down normally, except a longbow's counts only while standing: any
-    // real movement this tick restarts it in full — the archer must stand one
-    // uninterrupted reload before the next volley, so repositioning a longbow
-    // line is a real commitment (plan §4). Shortbows volley on the move. Runs
-    // after the position writes because it needs the tick's actual travel;
-    // archery fires after this loop, so no volley outruns its reload.
-    const mdx = U.x[i] - xi, mdy = U.y[i] - yi;
-    weapi === LONGBOW && mdx * mdx + mdy * mdy > stillD2
-      ? (U.cooldown[i] = LONGBOW_RELOAD)
-      : U.cooldown[i] > 0 && (U.cooldown[i] -= dt);
+    // --- reload & the longbow set clock (sim/archery.js fires at cooldown 0) --
+    // Cooldown ticks down for everyone. A longbow additionally keeps a
+    // stillness clock, zeroed by any real movement this tick; archery only
+    // looses it once the clock passes LONGBOW_SET — the line must stand and
+    // set before it can shoot, so repositioning is a real commitment (rework2
+    // plan B §3). Shortbows volley on the move. Runs after the position writes
+    // because it needs the tick's actual travel.
+    weapi === LONGBOW &&
+      (U.still[i] = tvx * tvx + tvy * tvy > stillD2 ? 0 : U.still[i] + dt);
+    U.cooldown[i] > 0 && (U.cooldown[i] -= dt);
   }
 
   // Volleys: loose ready archers at their beaten zones, land due arrows into dmg.

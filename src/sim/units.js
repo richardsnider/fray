@@ -11,6 +11,8 @@ export const x = new Float32Array(MAX_UNITS);  // current position
 export const y = new Float32Array(MAX_UNITS);
 export const vx = new Float32Array(MAX_UNITS);
 export const vy = new Float32Array(MAX_UNITS);
+export const tvx = new Float32Array(MAX_UNITS); // actual travel last movement tick (position delta
+export const tvy = new Float32Array(MAX_UNITS); // after terrain/pace/clamps; impalement reads it)
 export const hp = new Float32Array(MAX_UNITS);
 export const morale = new Float32Array(MAX_UNITS);
 export const team = new Uint8Array(MAX_UNITS);
@@ -18,6 +20,8 @@ export const arch = new Uint8Array(MAX_UNITS); // archetype id (index into confi
 export const state = new Uint8Array(MAX_UNITS);
 export const selected = new Uint8Array(MAX_UNITS); // 1 if the player has this unit selected
 export const cooldown = new Float32Array(MAX_UNITS); // archer reload timer (see sim/archery.js)
+export const still = new Float32Array(MAX_UNITS);    // seconds stood without real movement (longbow set clock, world.js)
+export const pressed = new Uint8Array(MAX_UNITS);    // 1 = enemy inside awareness radius this tick (silences bows, sim/archery.js)
 export const rallyId = new Int32Array(MAX_UNITS);    // id of the rally flag this unit marches to (world.js resolves it)
 export const slot = new Uint16Array(MAX_UNITS);      // rank-and-file slot in the flag's formation (sim/formation.js deals these)
 
@@ -31,6 +35,7 @@ export const spawn = (sx, sy, t, a, rid = -1) => {
   px[i] = x[i] = sx;
   py[i] = y[i] = sy;
   vx[i] = vy[i] = 0;
+  tvx[i] = tvy[i] = 0;
   hp[i] = ARCH_HP[a];
   morale[i] = 100;
   team[i] = t;
@@ -38,6 +43,8 @@ export const spawn = (sx, sy, t, a, rid = -1) => {
   state[i] = STATE.ACTIVE;
   selected[i] = 0;
   cooldown[i] = 0;
+  still[i] = 0;
+  pressed[i] = 0;
   rallyId[i] = rid;
   slot[i] = 0;
   return i;
@@ -50,10 +57,13 @@ const copyUnit = (dst, src) => {
   px[dst] = px[src]; py[dst] = py[src];
   x[dst] = x[src]; y[dst] = y[src];
   vx[dst] = vx[src]; vy[dst] = vy[src];
+  tvx[dst] = tvx[src]; tvy[dst] = tvy[src];
   hp[dst] = hp[src]; morale[dst] = morale[src];
   team[dst] = team[src]; arch[dst] = arch[src]; state[dst] = state[src];
   selected[dst] = selected[src];
   cooldown[dst] = cooldown[src];
+  still[dst] = still[src];
+  pressed[dst] = pressed[src];
   rallyId[dst] = rallyId[src];
   slot[dst] = slot[src];
 };

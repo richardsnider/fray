@@ -16,7 +16,7 @@ export const MAX_ZOOM = 4;              // CSS px per world unit at full zoom-in
 // archetype has a cost, ARMY_MIX below says what share of the budget goes to
 // each, and the spawner fields as many units as the share affords. Bump the
 // budget to stress-test the renderer/grid.
-export const ARMY_BUDGET = 10000;
+export const ARMY_BUDGET = 14000;
 
 // Steering / movement. SEEK_ACCEL + DAMPING set the base march velocity a unit
 // eases to; per-archetype pace is then a direct multiplier on travel (ARCH_SPEED).
@@ -42,18 +42,27 @@ export const WATER_AVOID = 160;         // steering force away from water ahead
 // Combat.
 export const FLEE_SPEED_MULT = 1.6;     // routing units run faster than they march
 
-// Polearm profile (docs/unit-rework-plan.md §3): damage scales with distance to
-// the target — full rate near max reach, almost nothing adjacent — and the
-// wielder holds at standoff instead of pressing to contact, so formation depth
-// is mechanically real: rank 2 fights over rank 1's shoulder, while blades
-// that burrow past the points face near-harmless pikes.
-export const POLEARM_MIN = 0.05;        // damage fraction when adjacent
-export const POLEARM_FULL_FRAC = 0.75;  // fraction of reach where the profile hits full rate
-export const STANDOFF_FRAC = 0.7;       // fraction of reach a polearm holds at while engaged
-export const POLEARM_VS_MOUNT = 1.75;   // polearm damage multiplier vs mounted: a set pike
-                                        // stops the horse — a big target barding can't save
-                                        // from a braced point (melee analog of MOUNT_ARROW_MULT)
-export const POLEARM_BRUSH = 0.4;       // max fractional polearm dps cut in dense brush:
+// Polearm profile (rework2 plan B §2–3): damage is a hard band — full rate
+// between POLEARM_BAND and max reach, zero inside it — and the wielder holds
+// at standoff instead of pressing to contact, so formation depth is
+// mechanically real: rank 2 fights over rank 1's shoulder, while a blade that
+// burrows past the points faces harmless pikes. On top of the band, the
+// impalement rule: damage scales with the victim's own closing speed onto the
+// point (the lance rule run in reverse — impact energy goes as v², and it's
+// the target bringing the speed). A galloping horse impales itself; a walking
+// one is merely fended; a *standing* knight is an ordinary target — no mount
+// check anywhere, cavalry just happens to arrive fastest.
+export const POLEARM_BAND = 0.55;       // fraction of reach where the damage band starts —
+                                        // floor ~6 at reach 11: blade contact (~5) sits in the
+                                        // dead zone, but a press that interpenetrates the block
+                                        // stays in reach of the pikes one rank deeper (6–11)
+export const STANDOFF_FRAC = 0.85;      // fraction of reach a polearm holds at while engaged:
+                                        // mid-band, so formation jitter can't flicker the
+                                        // target across the band floor into the dead zone
+export const IMPALE_MULT = 2;           // impalement scale: dmg × (1 + this × closingFrac²),
+                                        // closingFrac normalized to *unmounted* full march —
+                                        // a charging knight reaches ~1.26, light horse ~1.8
+export const POLEARM_BRUSH = 0.6;       // max fractional polearm dps cut in dense brush:
                                         // no room to work a 16-foot shaft between trees
 
 // Lance profile (docs/unit-rework-plan.md §3): damage scales with the
@@ -88,12 +97,13 @@ const MOUNT_SPEED  = 1.8;                    // pace multiplier when mounted
 // WEAPON_RANGE entry is volley range.
 // Weapon:                  BLADE BLUNT POLEARM BOW LONGBOW LANCE
 export const WEAPON_RANGE = [   5,    5,     11,  70,   110,    6 ]; // reach (world units)
-export const WEAPON_DPS   = [  16,   14,     18,   0,     0,    8 ]; // melee hp/sec; 0 = doesn't melee
-// Polearm 18 is a braced foot pike at full reach — the deadliest melee in the
-// game (and near zero adjacent, see the reach profile). Lance 8 is the rate
-// *standing*: deliberately below even an unbraced mounted polearm, because a
-// lance is nothing without speed — the LANCE_SPEED_MULT scale is its whole
-// value (~72 hp/sec for the moments a gallop contact lasts).
+export const WEAPON_DPS   = [  16,   14,     22,   0,     0,   13 ]; // melee hp/sec; 0 = doesn't melee
+// Polearm 22 is a braced foot pike in its damage band — the deadliest melee in
+// the game (and zero inside the points, see the hard band). Lance means
+// lance *and sword* (rework2 plan B §4): 13 standing is the sword arm of a
+// lancer milling in the press — respectable, under a foot blade's 16 for the
+// cramped seat — while the LANCE_SPEED_MULT scale is the lance point itself
+// (~117 hp/sec for the moments a gallop contact lasts).
 
 // Weapon-vs-armor damage multiplier — the whole protection story, applied to
 // melee and to arrow impacts. Replaces the old RPS type matrix: matchups fall
@@ -103,27 +113,36 @@ export const WEAPON_VS_ARMOR = [
   /* BLADE   */             [    1.3,      0.85,      0.6  ], // cuts notch on mail
   /* BLUNT   */             [    1.0,      1.1,       1.3  ],
   /* POLEARM */             [    1.0,      1.0,       1.0  ], // power is in reach, not matchup
-  /* BOW     */             [    1.0,      0.55,      0.15 ], // shortbow: armor shrugs it off
+  /* BOW     */             [    1.0,      0.35,      0.0  ], // shortbow: mail mostly stops it, plate ignores it
   /* LONGBOW */             [    1.3,      1.0,       0.5  ], // defeats mail, not plate
   /* LANCE   */             [    1.2,      0.85,      0.75 ], // × the speed scale (LANCE_SPEED_MULT)
 ];
 
 // Bow classes — both fire beaten-zone volleys (sim/archery.js); the class sets
-// the volley numbers and the movement rule. Shortbows volley on the move (a
-// mounted BOW archetype is a horse archer for free); a longbow's reload counts
-// down only while standing, and any movement restarts it in full (world.js) —
-// repositioning a longbow line is a real commitment, plant it early.
+// the volley numbers and the movement rules. Shortbows volley on the move (a
+// mounted BOW archetype is a horse archer for free); a longbow may only loose
+// after standing LONGBOW_SET seconds — its stillness clock (units.js `still`)
+// zeroes on any real movement — so repositioning a longbow line is a real
+// commitment, plant it early. Neither class shoots with an enemy at arm's
+// length (the pressed rule, world.js → archery.js) or drops a beaten zone
+// nearer than its minimum range: a bow is nothing in a melee, which is how
+// massed ranged loses to anything that reaches it (rework2 plan B §3).
 export const BowClass = { BOW: 0, LONGBOW: 1 };
 //                             BOW LONGBOW
 export const VOLLEY_DMG    = [  14,     30 ];  // damage per volley
 export const VOLLEY_RELOAD = [ 0.9,    1.6 ];  // seconds between volleys (keep > ARROW_FLIGHT:
                                                // at most one volley per archer in the air, so the
                                                // pending-impact ring buffer can never overflow)
+export const BOW_MIN_RANGE = [  12,     40 ];  // no beaten zone nearer than this. Cell-granular —
+                                               // the aim search rejects cell centers inside it —
+                                               // so true adjacency is the pressed rule's job
+export const LONGBOW_SET   = 1.6;       // seconds standing before a longbow may loose
 export const LONGBOW_STILL = 8;         // speed (world units/sec) that still counts as standing:
                                         // above the ~7 u/s a formed-up unit jitters around its
                                         // formation slot, well below the ~16 u/s open-ground march
-export const MOUNT_ARROW_MULT = 1.4;    // arrow damage vs mounted below HEAVY armor: unbarded
+const MOUNT_ARROW_MULT = 1.4;           // arrow damage vs mounted below HEAVY armor: unbarded
                                         // horses die to massed arrows; barding shrugs them off
+                                        // (consumed by ARCH_ARROW_MULT below; the sim reads that)
 
 // The roster: adding an archetype is one line. Cost is the price in army
 // points (see ARMY_BUDGET) — what a soldier of that line costs to raise and
@@ -132,21 +151,32 @@ export const MOUNT_ARROW_MULT = 1.4;    // arrow damage vs mounted below HEAVY a
 // blade and a shove into the line. First drafts, tuned against
 // `npm run balance:matrix` (equal budget per side).
 export const ARCHETYPES = [
-  { name: 'knights',     armor: Armor.HEAVY,   weapon: Weapon.LANCE,   mounted: 1, cost: 12 },
-  { name: 'longbowmen',  armor: Armor.NONE,    weapon: Weapon.LONGBOW, mounted: 0, cost: 4 },
-  { name: 'pikemen',     armor: Armor.ARMORED, weapon: Weapon.POLEARM, mounted: 0, cost: 4 },
-  { name: 'skirmishers', armor: Armor.NONE,    weapon: Weapon.BOW,     mounted: 0, cost: 3 },
-  { name: 'levy',        armor: Armor.NONE,    weapon: Weapon.BLADE,   mounted: 0, cost: 3 },
-  { name: 'sergeants',   armor: Armor.ARMORED, weapon: Weapon.BLUNT,   mounted: 0, cost: 4 },
-  { name: 'light horse', armor: Armor.NONE,    weapon: Weapon.BLADE,   mounted: 1, cost: 4 },
+  { name: 'knights',       armor: Armor.HEAVY,   weapon: Weapon.LANCE,   mounted: 1, cost: 14 },
+  { name: 'longbowmen',    armor: Armor.NONE,    weapon: Weapon.LONGBOW, mounted: 0, cost: 4 },
+  { name: 'pikemen',       armor: Armor.ARMORED, weapon: Weapon.POLEARM, mounted: 0, cost: 4 },
+  { name: 'skirmishers',   armor: Armor.NONE,    weapon: Weapon.BOW,     mounted: 0, cost: 3 },
+  { name: 'levy',          armor: Armor.NONE,    weapon: Weapon.BLADE,   mounted: 0, cost: 3 },
+  { name: 'sergeants',     armor: Armor.ARMORED, weapon: Weapon.BLUNT,   mounted: 0, cost: 4 },
+  { name: 'light horse',   armor: Armor.NONE,    weapon: Weapon.BLADE,   mounted: 1, cost: 4 },
+  // The rest of the stable (rework2 plan B §6) — every cavalry armament from
+  // the original scratch note is fielded: bow, blunt, and spear on horseback.
+  { name: 'horse archers', armor: Armor.NONE,    weapon: Weapon.BOW,     mounted: 1, cost: 6 },
+  { name: 'mtd sergeants', armor: Armor.ARMORED, weapon: Weapon.BLUNT,   mounted: 1, cost: 7 },
+  { name: 'hobilars',      armor: Armor.ARMORED, weapon: Weapon.POLEARM, mounted: 1, cost: 5 },
 ];
 export const ARCH_COUNT = ARCHETYPES.length;
-export const Arch = Object.fromEntries(ARCHETYPES.map((a, i) => [a.name.toUpperCase().replace(/\W+/g, '_'), i]));
 
-// A rider's spear keeps the reach but can't brace: mounted polearms thrust
-// one-handed at a fraction of the foot pike's rate. Baked into the flattened
-// per-archetype dps below so the hot loop still makes one indexed read.
-const POLEARM_MOUNT_MULT = 0.6;
+// How a mount changes a melee weapon, baked into the flattened per-archetype
+// dps below so the hot loop still makes one indexed read. A rider's blade or
+// mace strikes *down* from the saddle with gravity behind it. A rider's
+// spear keeps its full reach and thrust rate (the old 0.6 rate penalty is
+// retired — the band + thin ranks already lose mounted spears every foot
+// melee), but can't-brace lives on as the real rule: only *foot* polearms
+// earn the impalement charge spike (world.js) — setting a point against a
+// charge takes planted feet, so a spear hedge on horseback fends but never
+// skewers, and knights ride through hobilars while dying on pikemen.
+const POLEARM_MOUNT_MULT = 1.0;
+const MOUNT_MELEE_MULT = 1.5;
 
 // Flattened per-archetype lookups (plain arrays keep the stats full-precision).
 export const ARCH_ARMOR   = ARCHETYPES.map((a) => a.armor);
@@ -156,7 +186,10 @@ export const ARCH_MOUNTED = ARCHETYPES.map((a) => a.mounted);
 export const ARCH_HP      = ARCHETYPES.map((a) => ARMOR_HP[a.armor]);
 export const ARCH_SPEED   = ARCHETYPES.map((a) => ARMOR_SPEED[a.armor] * (a.mounted ? MOUNT_SPEED : 1));
 export const ARCH_MELEE_DPS = ARCHETYPES.map((a) =>
-  WEAPON_DPS[a.weapon] * (a.mounted && a.weapon === Weapon.POLEARM ? POLEARM_MOUNT_MULT : 1));
+  WEAPON_DPS[a.weapon] * (!a.mounted ? 1
+    : a.weapon === Weapon.POLEARM ? POLEARM_MOUNT_MULT
+    : a.weapon === Weapon.BLADE || a.weapon === Weapon.BLUNT ? MOUNT_MELEE_MULT
+    : 1));
 export const ARCH_BOW_CLASS = ARCHETYPES.map((a) =>       // -1 = not a bow archetype
   a.weapon === Weapon.BOW ? BowClass.BOW : a.weapon === Weapon.LONGBOW ? BowClass.LONGBOW : -1);
 export const ARCH_ARROW_MULT = ARCHETYPES.map((a) =>      // per-victim arrow impact multiplier
@@ -177,8 +210,8 @@ export const ARCHER_RESCAN = 0.25;      // retry delay when no enemy is in bow r
 // sum to ~1). Shares divide by cost to become head counts, so an equal share
 // buys far fewer knights than levies — the mix reads as a muster roll's purse,
 // not a head count.
-//                     knights longbowmen pikemen skirmishers levy sergeants light horse
-export const ARMY_MIX = [0.16,      0.18,   0.22,       0.06, 0.20,    0.12,       0.06];
+//                     knights longbowmen pikemen skirmishers levy sergeants light horse h.archers mtd serg hobilars
+export const ARMY_MIX = [0.12,      0.15,   0.18,       0.05, 0.16,    0.10,       0.05,     0.07,    0.05,    0.07];
 
 // Deployment: each army spawns as clustered squads of a single archetype (a block of
 // pike, a body of archers, a squadron of horse) rather than one intermixed soup,

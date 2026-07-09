@@ -15,17 +15,24 @@ export const create = (width, height, cell) => {
     cell, cols, rows,
     heads: new Int32Array(cols * rows),
     next: new Int32Array(MAX_UNITS),
+    // Per-team occupant counts per cell, so scans wider than the 3×3 core
+    // (polearm reach) can skip enemy-empty cells without walking anyone.
+    teamCounts: [new Uint16Array(cols * rows), new Uint16Array(cols * rows)],
   };
 };
 
-export const build = (g, count, xs, ys) => {
-  const { cell, cols, rows, heads, next } = g;
+export const build = (g, count, xs, ys, teams) => {
+  const { cell, cols, rows, heads, next, teamCounts } = g;
   heads.fill(-1);
+  const t0 = teamCounts[0], t1 = teamCounts[1];
+  t0.fill(0);
+  t1.fill(0);
   for (let i = 0; i < count; i++) {
     const cx = cellCoord(xs[i], cell, cols);
     const cy = cellCoord(ys[i], cell, rows);
     const c = cy * cols + cx;
     next[i] = heads[c];
     heads[c] = i;
+    (teams[i] === 0 ? t0 : t1)[c]++;
   }
 };

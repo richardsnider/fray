@@ -8,6 +8,7 @@
     "serve": "python3 -m http.server 8080",
     "balance": "node test/balance.js",
     "balance:matrix": "node test/balance.js --matrix",
+    "balance:goals": "node test/balance.js --goals",
     "analyze": "fallow",
     "audit": "fallow audit",
     "dead-code": "fallow dead-code"

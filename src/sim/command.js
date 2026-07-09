@@ -9,10 +9,9 @@
 import * as U from './units.js';
 import * as Rally from './rally.js';
 import * as Formation from './formation.js';
-import { Arch } from '../config.js';
+import { ARCH_COUNT } from '../config.js';
 
 const DEAD = U.STATE.DEAD;
-const { KNIGHTS, PIKEMEN } = Arch;
 
 // Provenance of the current player selection: the rally id it was grabbed from
 // (selectByRally), or -1 when it's a fresh box-select with no flag behind it.
@@ -82,16 +81,17 @@ export const commandSelected = (x, y) => {
   Formation.reassign(Rally.byId(targetId));
 };
 
-// Count selected live units by archetype for the HUD. Recomputed on demand so
-// it stays honest as selected units die. Returned object is reused.
-const selCounts = { knight: 0, archer: 0, pike: 0, total: 0 };
+// Count selected live units per archetype for the HUD. Recomputed on demand so
+// it stays honest as selected units die. Returned object is reused: `byArch`
+// is indexed by archetype id (config.ARCHETYPES order).
+const selCounts = { total: 0, byArch: new Int32Array(ARCH_COUNT) };
 export const getSelectionCounts = () => {
-  selCounts.knight = selCounts.archer = selCounts.pike = selCounts.total = 0;
+  selCounts.total = 0;
+  selCounts.byArch.fill(0);
   for (let i = 0; i < U.count; i++) {
     if (!liveSelected(i)) continue;
     selCounts.total++;
-    const t = U.arch[i];
-    t === KNIGHTS ? selCounts.knight++ : t === PIKEMEN ? selCounts.pike++ : selCounts.archer++;
+    selCounts.byArch[U.arch[i]]++;
   }
   return selCounts;
 };
