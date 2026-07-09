@@ -16,10 +16,10 @@ import {
   MAX_STEER_SPEED, FLEE_SPEED_MULT,
   MORALE_MAX, ROUT_THRESHOLD, RALLY_THRESHOLD, MORALE_REGEN,
   FEAR_OUTNUMBERED, FEAR_PANIC, HIT_FEAR,
-  SLOPE_SPEED, COVER_SLOW, MUD_SLOW, HEIGHT_DMG, WATER_LOOK, WATER_AVOID,
+  SLOPE_SPEED, BRUSH_SPEED_CAP, MUD_SLOW, HEIGHT_DMG, WATER_LOOK, WATER_AVOID,
   POLEARM_BRUSH,
   ARCH_COUNT, ARCH_COST, ARMY_MIX, SQUAD_SIZE, SQUAD_RADIUS, REFORM_TICKS,
-  ARCH_SPEED, ARCH_ARMOR, ARCH_WEAPON, ARCH_MOUNTED, ARCH_MELEE_DPS, Weapon,
+  ARCH_SPEED, ARCH_ARMOR, ARCH_WEAPON, ARCH_MOUNTED, ARCH_MELEE_DPS, ARCH_MOUNT_MELEE, Weapon,
   WEAPON_RANGE, WEAPON_DPS, WEAPON_VS_ARMOR,
   POLEARM_BAND, STANDOFF_FRAC, IMPALE_MULT,
   LONGBOW_STILL, LANCE_SPEED_MULT,
@@ -200,6 +200,9 @@ export const step = (dt) => {
     let routNear = 0;
     let ceIdx = -1;         // closest enemy (within ENEMY_R2 of this weapon)
     let ceD2 = Infinity;
+    let beIdx = -1;         // polearms only: closest enemy at/beyond the band
+    let beD2 = Infinity;    // floor — the strike target when ceIdx is inside it
+    const isPole = weapi === POLEARM;
 
     const ring = SCAN_RING[weapi];
     const enemyR2 = ENEMY_R2[weapi];
@@ -242,6 +245,7 @@ export const step = (dt) => {
               } else {
                 dd < scanR2 && enemyClose++;
                 dd < ceD2 && (ceD2 = dd, ceIdx = j);
+                isPole && dd < beD2 && dd >= BAND_MIN2 && (beD2 = dd, beIdx = j);
               }
             }
           }
@@ -268,15 +272,24 @@ export const step = (dt) => {
     // engage (MELEE_R2 = 0); their fight is sim/archery.js.
     let engaged = false;
     let lanceDmg = 0;   // a lance strike waits on this tick's travel, applied below
+    let lanceIdx = -1;
     if (statei === ACTIVE && ceIdx !== -1 && ceD2 <= MELEE_R2[weapi]) {
       engaged = true; // even a pike with the enemy inside its points is fighting, not resting
-      if (weapi !== POLEARM || ceD2 >= BAND_MIN2) {
+      // A polearm never wastes its thrust on the enemy burrowed inside its
+      // points: it strikes the nearest enemy at/beyond the band floor instead
+      // (eval-thoughts #1's no-targeting-below-the-band) — you can't spear
+      // the man on your chest, so you spear the next one a shaft-length out.
+      // Without this, anything fast enough to penetrate the standoff (any
+      // cavalry) shut a whole pike block's damage off by standing inside it.
+      const ti = !isPole ? ceIdx : beD2 <= MELEE_R2[weapi] ? beIdx : -1;
+      const tD2 = isPole ? beD2 : ceD2;
+      if (ti !== -1) {
         // Attacking downhill (higher ground than the target) hits harder.
-        const dh = T.elevation[tcell] - T.elevation[T.cellOf(U.x[ceIdx], U.y[ceIdx])];
+        const dh = T.elevation[tcell] - T.elevation[T.cellOf(U.x[ti], U.y[ti])];
         const bonus = clamp(1 + dh * HEIGHT_DMG, 0.5, 1.6);
-        const ta = U.arch[ceIdx];
+        const ta = U.arch[ti];
         let prof = 1;
-        if (weapi === POLEARM) {
+        if (isPole) {
           // Impalement: the victim's actual travel last movement tick (tvx/tvy,
           // real displacement after terrain and clamps), projected onto the
           // line toward this wielder, normalized by the *unmounted* full-march
@@ -288,20 +301,24 @@ export const step = (dt) => {
           // and thrust rate but never earns the charge spike.
           let imp = 0;
           if (!ARCH_MOUNTED[archi]) {
-            const inv = 1 / Math.sqrt(ceD2);
-            const closing = (U.tvx[ceIdx] * (xi - U.x[ceIdx]) + U.tvy[ceIdx] * (yi - U.y[ceIdx])) * inv / gallop;
+            const inv = 1 / Math.sqrt(tD2);
+            const closing = (U.tvx[ti] * (xi - U.x[ti]) + U.tvy[ti] * (yi - U.y[ti])) * inv / gallop;
             closing > 0 && (imp = IMPALE_MULT * closing * closing);
           }
           prof = (1 + imp) * (1 - T.cover[tcell] * POLEARM_BRUSH);
         }
-        // ARCH_MELEE_DPS is the weapon rate with the mount interactions baked
-        // in (config.js). The lance scales with the striker's travel, known
-        // only after the movement below — park its base rate for the late
-        // add; dmg[] resolves after the full pass, so a late accumulate
+        // The saddle bonus (mounted blade/blunt, config ARCH_MOUNT_MELEE) is
+        // open-ground work — striking down needs room to ride past and room
+        // to swing, so it fades with the *square* of the rider's brush cover
+        // (both are gone in a thicket, where a horseman hacks among branches
+        // like anyone else). The lance scales with the striker's travel,
+        // known only after the movement below — park its base rate for the
+        // late add; dmg[] resolves after the full pass, so a late accumulate
         // changes nothing else.
-        const d = ARCH_MELEE_DPS[archi] * dt * bonus * prof
-          * WEAPON_VS_ARMOR[weapi][ARCH_ARMOR[ta]];
-        weapi === LANCE ? (lanceDmg = d) : (dmg[ceIdx] += d);
+        const open = 1 - T.cover[tcell];
+        const d = ARCH_MELEE_DPS[archi] * (1 + ARCH_MOUNT_MELEE[archi] * open * open)
+          * dt * bonus * prof * WEAPON_VS_ARMOR[weapi][ARCH_ARMOR[ta]];
+        weapi === LANCE ? (lanceDmg = d, lanceIdx = ti) : (dmg[ti] += d);
       }
     }
 
@@ -385,10 +402,9 @@ export const step = (dt) => {
     // units flee quicker still.
     const pace = ARCH_SPEED[archi] * (statei === ROUTING ? FLEE_SPEED_MULT : 1);
 
-    // Terrain speed factor: brush and mud slow; uphill slows, downhill speeds
-    // up. Both ground penalties are multipliers on a faster base, so they
-    // punish cavalry proportionally hardest — no special cavalry rule needed.
-    let tf = (1 - T.cover[tcell] * COVER_SLOW) * (T.mudAt(xi, yi) ? 1 - MUD_SLOW : 1);
+    // Terrain speed factor: mud slows proportionally (soft ground drags every
+    // leg); uphill slows, downhill speeds up.
+    let tf = T.mudAt(xi, yi) ? 1 - MUD_SLOW : 1;
     if (sp > 0.001) {
       const gx = T.elevation[tcy * T.cols + clampIndex(tcx + 1, T.cols)] - T.elevation[tcy * T.cols + clampIndex(tcx - 1, T.cols)];
       const gy = T.elevation[clampIndex(tcy + 1, T.rows) * T.cols + tcx] - T.elevation[clampIndex(tcy - 1, T.rows) * T.cols + tcx];
@@ -397,8 +413,22 @@ export const step = (dt) => {
     }
     tf = clamp(tf, 0.35, 1.35);
 
-    let nx = xi + nvx * tf * pace * dt;
-    let ny = yi + nvy * tf * pace * dt;
+    // Brush is a hard ceiling on ground speed, not a multiplier: travel is
+    // capped at BRUSH_SPEED_CAP / cover density, so open ground never binds,
+    // a walking man barely notices light scrub, and in a thicket every
+    // archetype converges on the same crawl — a mount's pace (and a router's
+    // flee bonus) die with the room to run. This is what makes brush cavalry
+    // country's end without any mount-specific rule.
+    let mult = tf * pace;
+    const cov = T.cover[tcell];
+    if (cov > 0.01) {
+      const trav = sp * mult;
+      const cap = BRUSH_SPEED_CAP / cov;
+      trav > cap && (mult = cap / sp);
+    }
+
+    let nx = xi + nvx * mult * dt;
+    let ny = yi + nvy * mult * dt;
 
     // Water is impassable: try to slide along the shore, else hold position.
     T.isWaterAt(nx, ny) && (
@@ -429,7 +459,7 @@ export const step = (dt) => {
     // melee scores near the naked standing rate.
     if (lanceDmg > 0) {
       const frac = clamp01((tvx * tvx + tvy * tvy) / (gallop * ARCH_SPEED[archi]) ** 2);
-      dmg[ceIdx] += lanceDmg * (1 + frac * LANCE_SPEED_MULT);
+      dmg[lanceIdx] += lanceDmg * (1 + frac * LANCE_SPEED_MULT);
     }
 
     // --- reload & the longbow set clock (sim/archery.js fires at cooldown 0) --

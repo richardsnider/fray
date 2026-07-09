@@ -34,7 +34,11 @@ export const MUD_BAND = 0.05;           // elevation band above the waterline th
 export const MUD_SLOW = 0.5;            // fractional slowdown in mud — like brush but wetter,
                                         // and no cover benefit: soft ground, nothing to hide in
 export const SLOPE_SPEED = 26;          // uphill slows / downhill speeds movement
-export const COVER_SLOW = 0.45;         // max fractional slowdown in dense brush
+export const BRUSH_SPEED_CAP = 9;       // brush caps ground speed instead of scaling it: travel
+                                        // ≤ this / cover density (world units/sec) — unbounded in
+                                        // the open, and in a thicket every archetype converges on
+                                        // the same crawl, so a mount's pace advantage dies with
+                                        // the room to run (the todo's "reduce MAX speed")
 export const HEIGHT_DMG = 2.0;          // downhill melee damage bonus scale
 export const WATER_LOOK = 22;           // look-ahead distance for shoreline avoidance
 export const WATER_AVOID = 160;         // steering force away from water ahead
@@ -59,10 +63,10 @@ export const POLEARM_BAND = 0.55;       // fraction of reach where the damage ba
 export const STANDOFF_FRAC = 0.85;      // fraction of reach a polearm holds at while engaged:
                                         // mid-band, so formation jitter can't flicker the
                                         // target across the band floor into the dead zone
-export const IMPALE_MULT = 2;           // impalement scale: dmg × (1 + this × closingFrac²),
+export const IMPALE_MULT = 3;           // impalement scale: dmg × (1 + this × closingFrac²),
                                         // closingFrac normalized to *unmounted* full march —
                                         // a charging knight reaches ~1.26, light horse ~1.8
-export const POLEARM_BRUSH = 0.6;       // max fractional polearm dps cut in dense brush:
+export const POLEARM_BRUSH = 0.9;       // max fractional polearm dps cut in dense brush:
                                         // no room to work a 16-foot shaft between trees
 
 // Lance profile (docs/unit-rework-plan.md §3): damage scales with the
@@ -166,9 +170,11 @@ export const ARCHETYPES = [
 ];
 export const ARCH_COUNT = ARCHETYPES.length;
 
-// How a mount changes a melee weapon, baked into the flattened per-archetype
-// dps below so the hot loop still makes one indexed read. A rider's blade or
-// mace strikes *down* from the saddle with gravity behind it. A rider's
+// How a mount changes a melee weapon. A rider's blade or mace strikes *down*
+// from the saddle with gravity behind it — but the saddle bonus is open-ground
+// work: it needs room to ride past and swing, so the melee loop fades it with
+// the rider's brush cover (ARCH_MOUNT_MELEE below carries the bonus fraction;
+// in a thicket a horseman hacks among branches like anyone else). A rider's
 // spear keeps its full reach and thrust rate (the old 0.6 rate penalty is
 // retired — the band + thin ranks already lose mounted spears every foot
 // melee), but can't-brace lives on as the real rule: only *foot* polearms
@@ -186,10 +192,10 @@ export const ARCH_MOUNTED = ARCHETYPES.map((a) => a.mounted);
 export const ARCH_HP      = ARCHETYPES.map((a) => ARMOR_HP[a.armor]);
 export const ARCH_SPEED   = ARCHETYPES.map((a) => ARMOR_SPEED[a.armor] * (a.mounted ? MOUNT_SPEED : 1));
 export const ARCH_MELEE_DPS = ARCHETYPES.map((a) =>
-  WEAPON_DPS[a.weapon] * (!a.mounted ? 1
-    : a.weapon === Weapon.POLEARM ? POLEARM_MOUNT_MULT
-    : a.weapon === Weapon.BLADE || a.weapon === Weapon.BLUNT ? MOUNT_MELEE_MULT
-    : 1));
+  WEAPON_DPS[a.weapon] * (a.mounted && a.weapon === Weapon.POLEARM ? POLEARM_MOUNT_MULT : 1));
+export const ARCH_MOUNT_MELEE = ARCHETYPES.map((a) => // saddle bonus as a fraction over 1 —
+  a.mounted && (a.weapon === Weapon.BLADE || a.weapon === Weapon.BLUNT)
+    ? MOUNT_MELEE_MULT - 1 : 0);                      // the melee loop fades it with brush cover
 export const ARCH_BOW_CLASS = ARCHETYPES.map((a) =>       // -1 = not a bow archetype
   a.weapon === Weapon.BOW ? BowClass.BOW : a.weapon === Weapon.LONGBOW ? BowClass.LONGBOW : -1);
 export const ARCH_ARROW_MULT = ARCHETYPES.map((a) =>      // per-victim arrow impact multiplier

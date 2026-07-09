@@ -4,17 +4,20 @@
 // numbers get tuned instead of eyeballing 5000 dots.
 //
 //   npm run balance            standard mixed battles across seeds
-//   npm run balance:matrix     every archetype squad vs every other, equal
-//                              cost: each side spends the same points budget
-//                              on its one archetype, so a knight column is a
-//                              fraction the heads of the levy mob it faces —
-//                              verdicts compare surviving *value* (heads ×
-//                              cost), the only fair score across costs
+//   npm run balance:matrix     every archetype squad vs every other at equal
+//                              *head count*: N knights fight N levy, and the
+//                              verdict is raw survivors. Cost is deliberately
+//                              not in the verdict — it's an economy/roster
+//                              lever tuned later, on top of per-head matchup
+//                              truths established here (a levy player fields
+//                              2-3× the heads in a real game; see --ratio)
 //   npm run balance:goals      the design's sure-ness list (eval-thoughts,
 //                              rework2 plan B §7) as PASS/FAIL assertions —
 //                              the regression suite for combat tuning
 //
-// Flags: --seeds=N --ticks=N --budget=N (points per side in matrix/goals).
+// Flags: --seeds=N --ticks=N --heads=N (heads per side in matrix/goals).
+// --ratio=A,B sweeps outnumbering: N of A vs 1×..4× N of B, reporting where
+// the numbers overwhelm the per-head advantage — the input for costing.
 // --scenario=NAME runs the matrix on a controlled battlefield (see SCENARIOS).
 // --only=NAME restricts the matrix to pairs involving one archetype — the
 // cheap way to diagnose a single roster line while tuning it.
@@ -40,9 +43,10 @@ const argStr = (name, dflt) => {
 const MATRIX = process.argv.includes('--matrix');
 const GOALS = process.argv.includes('--goals');
 const DEFEND = process.argv.includes('--defend');
+const RATIO = argStr('ratio', null);
 const SEEDS = arg('seeds', GOALS ? 3 : 5);
 const TICKS = arg('ticks', 6000);   // × TICK_S ≈ 3 sim-minutes
-const BUDGET = arg('budget', 2000); // matrix/goals: army points per side
+const HEADS = arg('heads', 300);    // matrix/goals: heads per side
 
 const names = ARCHETYPES.map((a) => a.name);
 const byName = (n) => {
@@ -50,7 +54,10 @@ const byName = (n) => {
   if (i === -1) throw new Error(`no archetype named "${n}"`);
   return i;
 };
-const onehot = (a) => ARCHETYPES.map((_, i) => (i === a ? 1 : 0));
+// A one-archetype army of n heads. spawnArmy buys budget×mix/cost heads, so a
+// mix entry of cost×n against a budget of 1 spawns exactly n — head counts
+// stay cost-blind without touching the engine.
+const heads = (a, n) => ARCHETYPES.map((_, i) => (i === a ? ARCH_COST[a] * n : 0));
 
 // --- scenarios ---------------------------------------------------------------
 // Controlled battlefields (eval-thoughts #4): a paint fn hands terrain.js the
@@ -103,38 +110,37 @@ let ticksRun = 0;
 // (the boundary between the scenario's spawn zones), or a team index — that
 // team's spawn centroid, so the defenders plant on the ground they already
 // hold and the attackers march onto it.
-const run = (seed, scen, mixes, target) => {
-  world.init(seed, { ...mixes, budget: BUDGET, paint: scen.paint, zones: scen.zones, yband: scen.yband });
+const run = (seed, scen, mixes, target, ticks) => {
+  world.init(seed, { ...mixes, budget: 1, paint: scen.paint, zones: scen.zones, yband: scen.yband });
   if (target !== null) {
     const [tx, ty] = target === 'center' ? [WORLD_W / 2, WORLD_H / 2]
       : target === 'edge' ? [WORLD_W * scen.zones[0][1], WORLD_H / 2]
       : centroid(target);
     Rally.getRallies().forEach((r) => Rally.move(r.id, tx, ty));
   }
-  for (let t = 0; t < TICKS; t++) world.step(TICK_S);
-  ticksRun += TICKS;
+  for (let t = 0; t < ticks; t++) world.step(TICK_S);
+  ticksRun += ticks;
   return survivors();
 };
 
-// One matchup, a vs b, on a scenario: SEEDS seeds × both deployments so the
-// left/right draw (spawn scatter, split-field sides) washes out. `defend`
-// plants a on its spawn ground and marches b onto it. Verdict weighs
-// survivors by cost — whoever holds more surviving points of the equal
-// budgets — with margins under a few percent called a draw: in defend mode a
-// melee attacker can spend most of the clock marching, and a verdict off a
-// sliver of two near-intact armies is rounding noise.
-const duel = (a, b, scen, defend) => {
+// One matchup, na heads of a vs nb heads of b, on a scenario: SEEDS seeds ×
+// both deployments so the left/right draw (spawn scatter, split-field sides)
+// washes out. `defend` plants a on its spawn ground and marches b onto it.
+// Verdict is raw survivors, with margins under a few percent of the combined
+// survivors called a draw: in defend mode a melee attacker can spend most of
+// the clock marching, and a verdict off a sliver of two near-intact armies is
+// rounding noise.
+const duel = (a, b, scen, defend, na = HEADS, nb = HEADS, ticks = TICKS) => {
   let sa = 0, sb = 0;
   for (let seed = 1; seed <= SEEDS; seed++) {
-    const s1 = run(seed, scen, { mix0: onehot(a), mix1: onehot(b) }, defend ? 0 : scen.target ?? 'center');
+    const s1 = run(seed, scen, { mix0: heads(a, na), mix1: heads(b, nb) }, defend ? 0 : scen.target ?? 'center', ticks);
     sa += s1[0][a]; sb += s1[1][b];
-    const s2 = run(seed, scen, { mix0: onehot(b), mix1: onehot(a) }, defend ? 1 : scen.target ?? 'center');
+    const s2 = run(seed, scen, { mix0: heads(b, nb), mix1: heads(a, na) }, defend ? 1 : scen.target ?? 'center', ticks);
     sa += s2[1][a]; sb += s2[0][b];
   }
-  const va = sa * ARCH_COST[a], vb = sb * ARCH_COST[b];
-  const verdict = Math.abs(va - vb) * 2 <= 0.03 * (va + vb) ? 'draw'
-    : va > vb ? names[a] : names[b];
-  return { sa, sb, va, vb, verdict };
+  const verdict = Math.abs(sa - sb) * 2 <= 0.03 * (sa + sb) ? 'draw'
+    : sa > sb ? names[a] : names[b];
+  return { sa, sb, verdict };
 };
 
 const t0 = Date.now();
@@ -157,8 +163,10 @@ if (GOALS) {
     { id: 'b2', scen: 'brush', a: 'levy', b: 'longbowmen', expect: 'a' },
     { id: 'b3', scen: 'brush', a: 'levy', b: 'skirmishers', expect: 'a' },
     { id: 'b4', scen: 'brush', a: 'levy', b: 'light horse', expect: 'notB' },
-    // (c) longbows king on the open field with distance; heavy horse the best hope
-    { id: 'c1', scen: 'far', a: 'longbowmen', b: 'pikemen', expect: 'a', defend: true },
+    // (c) longbows king on the open field with distance; heavy horse the best hope.
+    // c1 runs a double clock: armored pikes need most of the standard 6000
+    // ticks just to cross the far map — the verdict is in the second half.
+    { id: 'c1', scen: 'far', a: 'longbowmen', b: 'pikemen', expect: 'a', defend: true, ticks: 12000 },
     { id: 'c2', scen: 'far', a: 'longbowmen', b: 'levy', expect: 'a', defend: true },
     { id: 'c3', scen: 'far', a: 'longbowmen', b: 'knights', expect: 'b', defend: true },
     // (d) ranged spawned next to melee mostly loses (foot ranged; horse
@@ -168,11 +176,11 @@ if (GOALS) {
     { id: 'd3', scen: 'adjacent', a: 'sergeants', b: 'longbowmen', expect: 'a' },
     { id: 'd4', scen: 'adjacent', a: 'pikemen', b: 'skirmishers', expect: 'a' },
   ];
-  console.log(`goals: ${BUDGET} points a side, ${TICKS} ticks, ${SEEDS} seeds × both sides\n`);
+  console.log(`goals: ${HEADS} heads a side, ${TICKS} ticks, ${SEEDS} seeds × both sides\n`);
   let failed = 0;
   for (const g of goals) {
-    const { va, vb, verdict } = duel(byName(g.a), byName(g.b), SCENARIOS[g.scen], g.defend ?? false);
-    const margin = ((va - vb) / ((va + vb) || 1) * 100).toFixed(0);
+    const { sa, sb, verdict } = duel(byName(g.a), byName(g.b), SCENARIOS[g.scen], g.defend ?? false, HEADS, HEADS, g.ticks ?? TICKS);
+    const margin = ((sa - sb) / ((sa + sb) || 1) * 100).toFixed(0);
     const ok = g.expect === 'report' ? null
       : g.expect === 'a' ? verdict === g.a
       : g.expect === 'b' ? verdict === g.b
@@ -180,7 +188,7 @@ if (GOALS) {
     ok === false && failed++;
     console.log(
       `${g.id.padEnd(3)} ${g.scen.padEnd(9)} ${(g.defend ? `${g.a} (defends)` : g.a).padEnd(23)} vs ${g.b.padEnd(12)} ` +
-      `value ${String(va).padStart(5)} / ${String(vb).padStart(5)}  (${margin > 0 ? '+' : ''}${margin}%)  ` +
+      `alive ${String(sa).padStart(5)} / ${String(sb).padStart(5)}  (${margin > 0 ? '+' : ''}${margin}%)  ` +
       (ok === null ? `→ ${verdict}` : ok ? 'PASS' : `FAIL (${verdict})`),
     );
   }
@@ -188,7 +196,7 @@ if (GOALS) {
   failed && (process.exitCode = 1);
 } else if (MATRIX) {
   console.log(`matrix (${SCENARIO}${DEFEND ? ', first named defends its ground' : ''}): ` +
-    `${BUDGET} points a side, ${TICKS} ticks, ${SEEDS} seeds × both sides\n`);
+    `${HEADS} heads a side, ${TICKS} ticks, ${SEEDS} seeds × both sides\n`);
   const scen = SCENARIOS[SCENARIO];
   const only = argStr('only', null);
   only !== null && byName(only); // fail fast on a typo'd archetype name
@@ -196,15 +204,29 @@ if (GOALS) {
     for (let b = DEFEND ? 0 : a + 1; b < ARCH_COUNT; b++) {
       if (a === b) continue;
       if (only !== null && names[a] !== only && names[b] !== only) continue;
-      const { sa, sb, va, vb, verdict } = duel(a, b, scen, DEFEND);
-      const fielded = (x) => Math.round(BUDGET / ARCH_COST[x]);
+      const { sa, sb, verdict } = duel(a, b, scen, DEFEND);
       console.log(
-        `${names[a].padEnd(13)} ×${String(fielded(a)).padEnd(4)} vs ` +
-        `${names[b].padEnd(13)} ×${String(fielded(b)).padEnd(4)}  ` +
-        `${String(sa).padStart(5)} / ${String(sb).padStart(5)} alive  ` +
-        `value ${String(va).padStart(5)} / ${String(vb).padStart(5)}  → ${verdict}`,
+        `${names[a].padEnd(13)} vs ${names[b].padEnd(13)}  ` +
+        `${String(sa).padStart(5)} / ${String(sb).padStart(5)} alive  → ${verdict}`,
       );
     }
+  }
+} else if (RATIO !== null) {
+  // Outnumbering sweep for one pair: HEADS of a hold still per-head quality
+  // while b brings 1×..4× the heads. The multiplier where the verdict flips
+  // is what a head of a is worth in heads of b — the ground truth for costing
+  // a against b in the roster economy (which the sim itself ignores).
+  const [a, b] = RATIO.split(',').map((s) => byName(s.trim()));
+  const scen = SCENARIOS[SCENARIO];
+  console.log(`ratio (${SCENARIO}${DEFEND ? ', first named defends its ground' : ''}): ` +
+    `${HEADS} ${names[a]} vs N× ${names[b]}, ${TICKS} ticks, ${SEEDS} seeds × both sides\n`);
+  for (const mult of [1, 1.5, 2, 2.5, 3, 4]) {
+    const nb = Math.round(HEADS * mult);
+    const { sa, sb, verdict } = duel(a, b, scen, DEFEND, HEADS, nb);
+    console.log(
+      `${names[a]} ×${HEADS} vs ${names[b]} ×${String(nb).padEnd(5)} ` +
+      `${String(sa).padStart(5)} / ${String(sb).padStart(5)} alive  → ${verdict}`,
+    );
   }
 } else {
   console.log(`standard battle: ${ARMY_BUDGET} points a side, ${TICKS} ticks, ${SEEDS} seeds\n`);
